@@ -20,8 +20,13 @@ export class FinalizePipeline {
     // 1. Build JobMetadataDocument from finalized slots
     const metadata = this.buildMetadataDocument(request);
 
-    // 2. Pin to IPFS via Pinata
-    const metadataURI = await this.pinToIPFS(metadata);
+    // 2. Pin to IPFS via Pinata (skip if not configured)
+    let metadataURI = '';
+    try {
+      metadataURI = await this.pinToIPFS(metadata);
+    } catch (err) {
+      console.warn('[finalize] IPFS pinning skipped:', (err as Error).message);
+    }
 
     // 3. Determine if criteria-aware or standard job
     const useCriteria = request.acceptedCriteria.length > 0;

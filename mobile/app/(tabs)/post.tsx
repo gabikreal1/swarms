@@ -87,13 +87,27 @@ export default function PostJobTab() {
         .filter(([_, v]) => v)
         .map(([k]) => k);
 
-      const finalCriteria = criteria.filter((c) => acceptedIds.includes(c.id));
+      const finalCriteria = criteria
+        .filter((c) => acceptedIds.includes(c.id))
+        .map((c) => ({
+          id: c.id,
+          description: c.description,
+          measurable: c.measurable ?? true,
+          source: c.source ?? 'llm_suggested',
+          accepted: true,
+        }));
+
+      const { getAccount } = await import('../../src/wallet/circle');
+      const account = await getAccount();
+      const walletAddr = account?.address || '';
 
       const result = (await api.finalizeJob({
         sessionId,
-        slots: analysis.slots,
+        slots: analysis.slots || {},
         tags: selectedTags,
-        criteria: finalCriteria,
+        acceptedCriteria: finalCriteria,
+        walletAddress: walletAddr,
+        category: analysis.slots?.category?.value || selectedTags[0] || 'audit',
       })) as { unsignedTx: { to: string; data: string; value: string }; budget: string };
 
       // Parse budget to USDC amount (6 decimals)
@@ -104,9 +118,7 @@ export default function PostJobTab() {
 
       // Step 1: Check allowance
       setTxStep('checking');
-      const { getAccount } = await import('../../src/wallet/circle');
-      const account = await getAccount();
-      const currentAllowance = await checkAllowance(account.address, escrow);
+      const currentAllowance = await checkAllowance(account!.address, escrow);
 
       // Step 2: Approve if needed
       if (currentAllowance < budgetAmount) {
@@ -200,7 +212,7 @@ export default function PostJobTab() {
           </Section>
 
           {/* Missing Slots */}
-          {analysis.missingSlots.length > 0 && (
+          {(analysis.missingSlots?.length ?? 0) > 0 && (
             <Section header="Clarifying Questions">
               {analysis.missingSlots.map((slot, index) => (
                 <View
@@ -231,7 +243,7 @@ export default function PostJobTab() {
                       }
                     }}
                   />
-                  {index < analysis.missingSlots.length - 1 && (
+                  {index < (analysis.missingSlots?.length ?? 0) - 1 && (
                     <View
                       style={{
                         height: StyleSheet.hairlineWidth,

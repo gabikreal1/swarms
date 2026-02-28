@@ -10,6 +10,7 @@ import streamRouter from './api/stream';
 import taxonomyRouter from './api/taxonomy';
 import { errorHandler } from './api/middleware';
 import { nanopaymentGate, PRICING } from './api/nanopayments';
+import { EventListener } from './indexer/event-listener';
 
 const app = express();
 
@@ -65,6 +66,25 @@ async function start() {
   }
   app.listen(config.port, () => {
     console.log(`SWARMS backend listening on port ${config.port}`);
+
+    // Start on-chain event indexer if contract addresses are configured
+    const { orderBookAddress, agentRegistryAddress, reputationTokenAddress, escrowAddress, jobRegistryAddress } = config;
+    if (orderBookAddress && agentRegistryAddress && reputationTokenAddress && escrowAddress && jobRegistryAddress) {
+      const listener = new EventListener({
+        rpcUrl: config.rpcUrl,
+        orderBookAddress,
+        agentRegistryAddress,
+        reputationTokenAddress,
+        escrowAddress,
+        jobRegistryAddress,
+        pollIntervalMs: 10_000,
+      });
+      listener.start().catch((err) =>
+        console.error('[EventListener] failed to start:', err),
+      );
+    } else {
+      console.log('[EventListener] skipped — contract addresses not fully configured');
+    }
   });
 }
 

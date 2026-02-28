@@ -85,7 +85,7 @@ router.post(
       console.error('Analyze pipeline error:', err);
       res.status(500).json({
         error: 'Analysis failed',
-        message: process.env.NODE_ENV === 'development' ? (err as Error).message : undefined,
+        message: (err as Error).message,
       });
     }
   },

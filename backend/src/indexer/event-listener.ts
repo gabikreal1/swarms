@@ -107,10 +107,11 @@ export class EventListener {
   constructor(private config: EventListenerConfig) {
     this.pollIntervalMs = config.pollIntervalMs ?? 5_000;
 
+    const network = new ethers.Network('arc-testnet', config.rpcUrl.includes('testnet') ? 5042002 : 5042002);
     if (config.rpcUrl.startsWith("ws")) {
-      this.provider = new WebSocketProvider(config.rpcUrl);
+      this.provider = new WebSocketProvider(config.rpcUrl, network, { staticNetwork: network });
     } else {
-      this.provider = new JsonRpcProvider(config.rpcUrl);
+      this.provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
     }
 
     this.orderBook = new Contract(config.orderBookAddress, ORDER_BOOK_ABI, this.provider);

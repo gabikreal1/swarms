@@ -53,7 +53,8 @@ export class ChainReader {
   private cacheTTL = 15_000; // 15 seconds
 
   constructor() {
-    this.provider = new JsonRpcProvider(config.rpcUrl);
+    const network = new ethers.Network('arc-testnet', 5042002);
+    this.provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
     this.jobRegistry = new Contract(
       config.jobRegistryAddress || '',
       JOB_REGISTRY_ABI,

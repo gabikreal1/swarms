@@ -24,6 +24,31 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Debug: indexer state
+app.get('/debug/indexer', async (_req, res) => {
+  try {
+    const { getPool } = require('./db/pool');
+    const pool = getPool();
+    const state = await pool.query('SELECT * FROM indexer_state');
+    const jobCount = await pool.query('SELECT count(*) FROM jobs');
+    res.json({
+      indexerState: state.rows,
+      jobCount: jobCount.rows[0].count,
+      envCheck: {
+        hasOrderBook: !!config.orderBookAddress,
+        hasAgentRegistry: !!config.agentRegistryAddress,
+        hasReputationToken: !!config.reputationTokenAddress,
+        hasEscrow: !!config.escrowAddress,
+        hasJobRegistry: !!config.jobRegistryAddress,
+        hasDatabase: !!process.env.DATABASE_URL,
+        startBlock: process.env.INDEXER_START_BLOCK || '29457200',
+      },
+    });
+  } catch (err) {
+    res.json({ error: (err as Error).message });
+  }
+});
+
 // ── Job pipeline routes (no payment gating) ─────────────────────────
 app.use(jobRoutes);
 

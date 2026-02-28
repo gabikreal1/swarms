@@ -1,0 +1,140 @@
+{
+  "version": "1.0",
+  "updatedAt": "2026-02-28",
+  "categories": [
+    {
+      "id": "development",
+      "label": "Development",
+      "children": [
+        {
+          "id": "development.blockchain",
+          "label": "Blockchain Development",
+          "tags": [
+            {
+              "id": "solidity",
+              "label": "Solidity",
+              "aliases": ["sol", "smart-contracts-solidity"],
+              "related_tags": ["evm", "hardhat", "foundry"]
+            },
+            {
+              "id": "rust-blockchain",
+              "label": "Rust (Blockchain)",
+              "aliases": ["solana-rust", "substrate"],
+              "related_tags": ["solana", "polkadot"]
+            },
+            {
+              "id": "vyper",
+              "label": "Vyper",
+              "aliases": [],
+              "related_tags": ["evm", "python"]
+            },
+            {
+              "id": "cairo",
+              "label": "Cairo",
+              "aliases": ["starknet-cairo"],
+              "related_tags": ["starknet"]
+            },
+            {
+              "id": "move",
+              "label": "Move",
+              "aliases": ["aptos-move", "sui-move"],
+              "related_tags": ["aptos", "sui"]
+            }
+          ],
+          "children": [
+            {
+              "id": "development.blockchain.smart-contracts",
+              "label": "Smart Contracts",
+              "tags": [
+                { "id": "evm", "label": "EVM", "aliases": ["ethereum-virtual-machine"], "related_tags": ["solidity", "vyper"] },
+                { "id": "hardhat", "label": "Hardhat", "aliases": [], "related_tags": ["solidity", "testing"] },
+                { "id": "foundry", "label": "Foundry", "aliases": ["forge"], "related_tags": ["solidity", "testing"] }
+              ]
+            },
+            {
+              "id": "development.blockchain.defi",
+              "label": "DeFi",
+              "tags": [
+                { "id": "amm", "label": "AMM", "aliases": ["automated-market-maker"], "related_tags": ["defi", "liquidity"] },
+                { "id": "lending", "label": "Lending Protocols", "aliases": ["borrowing"], "related_tags": ["defi"] },
+                { "id": "yield", "label": "Yield Optimization", "aliases": ["yield-farming"], "related_tags": ["defi", "amm"] }
+              ]
+            },
+            {
+              "id": "development.blockchain.security",
+              "label": "Security & Auditing",
+              "tags": [
+                { "id": "audit", "label": "Smart Contract Audit", "aliases": ["security-audit"], "related_tags": ["solidity", "testing"] },
+                { "id": "formal-verification", "label": "Formal Verification", "aliases": [], "related_tags": ["audit", "testing"] }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "development.frontend",
+          "label": "Frontend Development",
+          "tags": [
+            { "id": "react", "label": "React", "aliases": ["reactjs"], "related_tags": ["nextjs", "typescript"] },
+            { "id": "vue", "label": "Vue", "aliases": ["vuejs"], "related_tags": ["nuxt", "typescript"] },
+            { "id": "nextjs", "label": "Next.js", "aliases": ["next"], "related_tags": ["react", "typescript"] },
+            { "id": "react-native", "label": "React Native", "aliases": ["rn", "mobile-react"], "related_tags": ["react", "mobile"] },
+            { "id": "typescript-fe", "label": "TypeScript (Frontend)", "aliases": ["ts-frontend"], "related_tags": ["react", "vue"] }
+          ]
+        },
+        {
+          "id": "development.backend",
+          "label": "Backend Development",
+          "tags": [
+            { "id": "python", "label": "Python", "aliases": ["py"], "related_tags": ["django", "fastapi"] },
+            { "id": "node", "label": "Node.js", "aliases": ["nodejs", "express"], "related_tags": ["typescript", "express"] },
+            { "id": "go", "label": "Go", "aliases": ["golang"], "related_tags": ["microservices"] },
+            { "id": "rust", "label": "Rust", "aliases": ["rust-lang"], "related_tags": ["systems", "performance"] },
+            { "id": "api-design", "label": "API Design", "aliases": ["rest", "graphql"], "related_tags": ["node", "python"] }
+          ]
+        },
+        {
+          "id": "development.ml",
+          "label": "Machine Learning",
+          "tags": [
+            { "id": "python-ml", "label": "Python (ML)", "aliases": ["ml-python"], "related_tags": ["pytorch", "tensorflow"] },
+            { "id": "pytorch", "label": "PyTorch", "aliases": ["torch"], "related_tags": ["python-ml", "deep-learning"] },
+            { "id": "tensorflow", "label": "TensorFlow", "aliases": ["tf"], "related_tags": ["python-ml", "deep-learning"] },
+            { "id": "llm-fine-tuning", "label": "LLM Fine-tuning", "aliases": ["finetuning"], "related_tags": ["python-ml", "nlp"] },
+            { "id": "nlp", "label": "NLP", "aliases": ["natural-language-processing"], "related_tags": ["python-ml", "llm-fine-tuning"] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "data",
+      "label": "Data",
+      "tags": [
+        { "id": "data-analysis", "label": "Data Analysis", "aliases": ["analytics"], "related_tags": ["sql", "python"] },
+        { "id": "sql", "label": "SQL", "aliases": ["database-query"], "related_tags": ["data-analysis", "etl"] },
+        { "id": "etl", "label": "ETL", "aliases": ["data-pipeline", "data-engineering"], "related_tags": ["sql", "python"] },
+        { "id": "scraping", "label": "Web Scraping", "aliases": ["crawling", "data-extraction"], "related_tags": ["python", "node"] },
+        { "id": "visualization", "label": "Data Visualization", "aliases": ["dataviz", "dashboards"], "related_tags": ["data-analysis"] }
+      ]
+    },
+    {
+      "id": "design",
+      "label": "Design",
+      "tags": [
+        { "id": "ui-ux", "label": "UI/UX Design", "aliases": ["user-interface", "user-experience"], "related_tags": ["figma", "react"] },
+        { "id": "figma", "label": "Figma", "aliases": ["figma-design"], "related_tags": ["ui-ux", "branding"] },
+        { "id": "branding", "label": "Branding", "aliases": ["brand-design", "identity"], "related_tags": ["figma", "ui-ux"] },
+        { "id": "graphic-design", "label": "Graphic Design", "aliases": ["graphics"], "related_tags": ["branding", "figma"] }
+      ]
+    },
+    {
+      "id": "content",
+      "label": "Content",
+      "tags": [
+        { "id": "technical-writing", "label": "Technical Writing", "aliases": ["tech-writing", "documentation"], "related_tags": ["docs"] },
+        { "id": "copywriting", "label": "Copywriting", "aliases": ["copy", "marketing-copy"], "related_tags": ["content-strategy"] },
+        { "id": "docs", "label": "Documentation", "aliases": ["developer-docs", "api-docs"], "related_tags": ["technical-writing"] },
+        { "id": "content-strategy", "label": "Content Strategy", "aliases": ["content-planning"], "related_tags": ["copywriting"] }
+      ]
+    }
+  ]
+}

@@ -83,6 +83,95 @@ export async function signAndSendTransaction(tx: {
   return hash;
 }
 
+export async function checkAllowance(
+  owner: `0x${string}`,
+  spender: `0x${string}`,
+): Promise<bigint> {
+  if (USE_MOCKS) {
+    await mockDelay();
+    return 0n;
+  }
+
+  const { createPublicClient, http, erc20Abi } = await import('viem');
+  const { arcTestnet, USDC_ADDRESS } = await import('../config/chains');
+
+  const client = createPublicClient({
+    chain: arcTestnet,
+    transport: http(),
+  });
+
+  const allowance = await client.readContract({
+    address: USDC_ADDRESS,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [owner, spender],
+  });
+
+  return allowance;
+}
+
+export async function approveUSDC(
+  spender: `0x${string}`,
+  amount: bigint,
+): Promise<string> {
+  if (USE_MOCKS) {
+    await mockDelay();
+    return '0xmock_approve_hash_' + Date.now().toString(16);
+  }
+
+  const account = await getAccount();
+  const { createWalletClient, http, encodeFunctionData, erc20Abi } = await import('viem');
+  const { arcTestnet, USDC_ADDRESS } = await import('../config/chains');
+
+  const client = createWalletClient({
+    account,
+    chain: arcTestnet,
+    transport: http(),
+  });
+
+  const data = encodeFunctionData({
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [spender, amount],
+  });
+
+  const hash = await client.sendTransaction({
+    to: USDC_ADDRESS,
+    data,
+    value: 0n,
+  });
+
+  return hash;
+}
+
+export async function waitForReceipt(
+  txHash: `0x${string}`,
+  timeoutMs: number = 30000,
+): Promise<{ status: 'success' | 'reverted'; transactionHash: string }> {
+  if (USE_MOCKS) {
+    await mockDelay();
+    return { status: 'success', transactionHash: txHash };
+  }
+
+  const { createPublicClient, http } = await import('viem');
+  const { arcTestnet } = await import('../config/chains');
+
+  const client = createPublicClient({
+    chain: arcTestnet,
+    transport: http(),
+  });
+
+  const receipt = await client.waitForTransactionReceipt({
+    hash: txHash,
+    timeout: timeoutMs,
+  });
+
+  return {
+    status: receipt.status,
+    transactionHash: receipt.transactionHash,
+  };
+}
+
 export async function exportPrivateKey(): Promise<string> {
   const pk = await SecureStore.getItemAsync(STORAGE_KEY);
   if (!pk) throw new Error('No wallet found.');

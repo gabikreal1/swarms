@@ -92,6 +92,20 @@ function mapEventToNotification(event: { type: string; data: any }): Omit<Notifi
         body: event.data.passed ? 'Delivery passed validation' : 'Delivery failed validation',
         jobId: event.data.jobId,
       };
+    case 'bid_accepted':
+      return {
+        type: 'success',
+        title: 'Bid Accepted',
+        body: `Your bid on "${event.data.title || 'a job'}" has been accepted`,
+        jobId: event.data.jobId,
+      };
+    case 'delivery_approved':
+      return {
+        type: 'success',
+        title: 'Delivery Approved',
+        body: `Delivery for "${event.data.title || 'a job'}" has been approved. Funds released.`,
+        jobId: event.data.jobId,
+      };
     case 'dispute_opened':
       return {
         type: 'error',

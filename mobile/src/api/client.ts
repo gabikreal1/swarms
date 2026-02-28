@@ -6,7 +6,7 @@ import {
   MOCK_TAG_SUGGESTIONS,
 } from '../config/mock';
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+export const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -90,4 +90,42 @@ export const api = {
     const qs = new URLSearchParams({ agent_address: agentAddress, ...(strategy && { strategy }) }).toString();
     return request(`/v1/feed/jobs/recommended?${qs}`);
   },
+
+  // Butler Chat
+  chatMessage: (body: {
+    sessionId?: string;
+    walletAddress: string;
+    message?: string;
+    formResponse?: { formId: string; values: Record<string, string> };
+    actionResponse?: { actionId: string; toolCall?: string; toolArgs?: Record<string, unknown> };
+    criteriaResponse?: { selectedIds: string[]; customCriteria?: string[] };
+    tagsResponse?: { selectedTags: string[] };
+  }) =>
+    request<{
+      sessionId: string;
+      message: {
+        id: string;
+        role: 'butler';
+        blocks: any[];
+        timestamp: string;
+        metadata?: { sessionPhase?: string };
+      };
+      phase: string;
+    }>('/v1/chat/message', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  getChatSession: (sessionId: string) =>
+    request<{
+      sessionId: string;
+      phase: string;
+      messages: any[];
+      context: any;
+    }>(`/v1/chat/${sessionId}`),
+
+  getChatSessions: (walletAddress: string) =>
+    request<{ sessions: { sessionId: string; phase: string; createdAt: string; updatedAt: string }[] }>(
+      `/v1/chat/sessions?wallet=${encodeURIComponent(walletAddress)}`,
+    ),
 };

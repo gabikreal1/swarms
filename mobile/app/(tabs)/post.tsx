@@ -10,13 +10,15 @@ import {
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../src/theme/useTheme';
 import { api } from '../../src/api/client';
-import { signAndSendTransaction } from '../../src/wallet/circle';
+import { signAndSendTransaction, checkAllowance, approveUSDC, waitForReceipt } from '../../src/wallet/circle';
+import { CONTRACTS, USDC_DECIMALS } from '../../src/config/chains';
 import { Section } from '../../src/components/ios/Section';
 import { SectionRow } from '../../src/components/ios/SectionRow';
 import { Button } from '../../src/components/ios/Button';
 import CompletionBar from '../../src/components/CompletionBar';
 import CriteriaList, { SuccessCriterion } from '../../src/components/CriteriaList';
 import TagSelector from '../../src/components/TagSelector';
+import TransactionStatus, { TxStep } from '../../src/components/TransactionStatus';
 
 interface AnalysisResult {
   sessionId: string;
@@ -39,6 +41,9 @@ export default function PostJobTab() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [acceptedCriteria, setAcceptedCriteria] = useState<Record<string, boolean>>({});
   const [criteria, setCriteria] = useState<SuccessCriterion[]>([]);
+  const [txStep, setTxStep] = useState<TxStep | null>(null);
+  const [txHash, setTxHash] = useState<string | undefined>();
+  const [txError, setTxError] = useState<string | undefined>();
 
   const handleAnalyze = async () => {
     if (!query.trim()) return;
@@ -73,6 +78,10 @@ export default function PostJobTab() {
   const handlePostJob = async () => {
     if (!analysis) return;
     setPosting(true);
+    setTxStep(null);
+    setTxHash(undefined);
+    setTxError(undefined);
+
     try {
       const acceptedIds = Object.entries(acceptedCriteria)
         .filter(([_, v]) => v)
@@ -85,16 +94,59 @@ export default function PostJobTab() {
         slots: analysis.slots,
         tags: selectedTags,
         criteria: finalCriteria,
-      })) as { unsignedTx: { to: string; data: string; value: string } };
+      })) as { unsignedTx: { to: string; data: string; value: string }; budget: string };
 
-      const txHash = await signAndSendTransaction(result.unsignedTx);
-      Alert.alert('Job Posted', `Transaction: ${String(txHash).slice(0, 16)}...`, [
-        { text: 'OK', onPress: () => router.push('/(tabs)/') },
-      ]);
+      // Parse budget to USDC amount (6 decimals)
+      const budgetNum = parseFloat(result.budget || analysis.slots.budget || '0');
+      const budgetAmount = BigInt(Math.ceil(budgetNum * 10 ** USDC_DECIMALS));
+
+      const escrow = CONTRACTS.Escrow as `0x${string}`;
+
+      // Step 1: Check allowance
+      setTxStep('checking');
+      const { getAccount } = await import('../../src/wallet/circle');
+      const account = await getAccount();
+      const currentAllowance = await checkAllowance(account.address, escrow);
+
+      // Step 2: Approve if needed
+      if (currentAllowance < budgetAmount) {
+        setTxStep('approving');
+        const approveHash = await approveUSDC(escrow, budgetAmount);
+        const approveReceipt = await waitForReceipt(approveHash as `0x${string}`);
+        if (approveReceipt.status === 'reverted') {
+          setTxStep('failed');
+          setTxError('USDC approval transaction reverted');
+          setPosting(false);
+          return;
+        }
+      }
+
+      // Step 3: Sign and send the job posting tx
+      setTxStep('posting');
+      const jobTxHash = await signAndSendTransaction(result.unsignedTx);
+      setTxHash(String(jobTxHash));
+
+      // Step 4: Wait for confirmation
+      const jobReceipt = await waitForReceipt(jobTxHash as `0x${string}`);
+      if (jobReceipt.status === 'reverted') {
+        setTxStep('failed');
+        setTxError('Job posting transaction reverted');
+        setPosting(false);
+        return;
+      }
+
+      setTxStep('confirmed');
+      setPosting(false);
+
+      // Navigate after a short delay so user sees confirmation
+      setTimeout(() => {
+        router.push('/(tabs)/');
+      }, 2000);
     } catch (err: any) {
-      Alert.alert('Posting failed', err.message || 'Transaction failed');
+      setTxStep('failed');
+      setTxError(err.message || 'Transaction failed');
+      setPosting(false);
     }
-    setPosting(false);
   };
 
   return (
@@ -232,6 +284,13 @@ export default function PostJobTab() {
             </Section>
           )}
 
+          {/* Transaction Status */}
+          {txStep && (
+            <Section header="Transaction">
+              <TransactionStatus step={txStep} txHash={txHash} errorMessage={txError} />
+            </Section>
+          )}
+
           {/* Post Button */}
           <View style={styles.buttonContainer}>
             <Button
@@ -240,6 +299,7 @@ export default function PostJobTab() {
               color={colors.systemGreen}
               onPress={handlePostJob}
               loading={posting}
+              disabled={posting}
             />
           </View>
         </>

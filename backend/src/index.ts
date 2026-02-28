@@ -8,6 +8,7 @@ import marketRouter from './api/market';
 import feedRouter from './api/feed';
 import streamRouter from './api/stream';
 import taxonomyRouter from './api/taxonomy';
+import chatRouter from './api/chat';
 import { errorHandler } from './api/middleware';
 import { nanopaymentGate, PRICING } from './api/nanopayments';
 import { EventListener } from './indexer/event-listener';
@@ -41,7 +42,7 @@ app.get('/debug/indexer', async (_req, res) => {
         hasEscrow: !!config.escrowAddress,
         hasJobRegistry: !!config.jobRegistryAddress,
         hasDatabase: !!process.env.DATABASE_URL,
-        startBlock: process.env.INDEXER_START_BLOCK || '29457200',
+        startBlock: process.env.INDEXER_START_BLOCK || '0',
       },
     });
   } catch (err) {
@@ -57,6 +58,9 @@ app.use(jobRoutes);
 app.use('/v1/feed/jobs/recommended', nanopaymentGate(PRICING.premium));
 // Free: /v1/feed/jobs, /v1/feed/agents
 app.use('/v1/feed', feedRouter);
+
+// ── Butler chat routes (free) ────────────────────────────────────────
+app.use('/v1/chat', chatRouter);
 
 // ── Stream routes (free) ─────────────────────────────────────────────
 app.use('/v1/stream', streamRouter);
@@ -121,7 +125,7 @@ async function start() {
         escrowAddress,
         jobRegistryAddress,
         pollIntervalMs: 10_000,
-        startBlock: Number(process.env.INDEXER_START_BLOCK ?? 29457200),
+        startBlock: Number(process.env.INDEXER_START_BLOCK ?? 0),
       });
       listener.start().catch((err) =>
         console.error('[EventListener] failed to start:', err),

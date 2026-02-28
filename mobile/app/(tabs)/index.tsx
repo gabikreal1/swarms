@@ -24,15 +24,13 @@ const publicClient = createPublicClient({
   transport: http(),
 });
 
-const statusToSystemColor: Record<string, string> = {};
-
-function useStatusColor(status: string, colors: any) {
+function getStatusColor(status: string, colors: any): string {
   const map: Record<string, string> = {
-    OPEN: colors.systemBlue,
-    IN_PROGRESS: colors.systemYellow,
-    DELIVERED: colors.systemIndigo,
-    VALIDATING: colors.systemOrange,
-    COMPLETED: colors.systemGreen,
+    OPEN: colors.systemGreen,
+    IN_PROGRESS: colors.systemBlue,
+    DELIVERED: colors.systemOrange,
+    VALIDATING: colors.systemIndigo,
+    COMPLETED: colors.tertiaryLabel,
     DISPUTED: colors.systemRed,
   };
   return map[status] || colors.tertiaryLabel;
@@ -179,18 +177,34 @@ export default function HomeTab() {
             const title = item.title || item.description?.slice(0, 60) || 'Untitled';
             const status = item.status || 'OPEN';
             const budget = `${item.budget || '0'} USDC`;
+            const bidCount = item.bids?.length || item.bidCount || 0;
+            const statusColor = getStatusColor(status, colors);
+
+            // Build detail string with bid count
+            const detailParts = [budget];
+            if (bidCount > 0) {
+              detailParts.push(`${bidCount} bid${bidCount !== 1 ? 's' : ''}`);
+            }
             const deadline = item.deadline
               ? new Date(item.deadline).toLocaleDateString()
-              : 'No deadline';
+              : null;
+            if (deadline) detailParts.push(deadline);
 
             return (
               <SectionRow
                 key={item.id}
                 label={title}
-                detail={`${budget} · ${deadline}`}
+                detail={detailParts.join(' · ')}
                 accessory="badge"
                 badgeText={status.replace('_', ' ')}
-                badgeColor={useStatusColor(status, colors)}
+                badgeColor={statusColor}
+                icon={
+                  bidCount > 0 && status === 'OPEN' ? (
+                    <View style={[styles.bidCountBadge, { backgroundColor: colors.systemOrange }]}>
+                      <Text style={styles.bidCountText}>{bidCount}</Text>
+                    </View>
+                  ) : undefined
+                }
                 isLast={index === jobs.length - 1}
                 onPress={() => router.push(`/job/${item.id}`)}
               />
@@ -245,6 +259,18 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     flex: 1,
+  },
+  bidCountBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bidCountText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
   empty: {
     alignItems: 'center',

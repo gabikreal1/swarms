@@ -8,20 +8,50 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme/useTheme';
-import { USE_MOCKS, MOCK_CHAT_MESSAGES } from '../../src/config/mock';
+import {
+  USE_MOCKS,
+  MOCK_CHAT_MESSAGES,
+  GREETING_BLOCKS,
+  CLARIFICATION_BLOCKS,
+  ANALYSIS_BLOCKS,
+} from '../../src/config/mock';
+import { api, API_BASE } from '../../src/api/client';
+import { initWallet } from '../../src/wallet/circle';
+import BlockRenderer from '../../src/components/genui/BlockRenderer';
+
+interface GenUIBlock {
+  id: string;
+  type: string;
+  [key: string]: any;
+}
 
 interface Message {
   id: string;
-  role: 'user' | 'agent';
+  role: 'user' | 'butler';
   text: string;
   timestamp: number;
+  blocks?: GenUIBlock[];
 }
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
+const PHASE_LABELS: Record<string, string> = {
+  greeting: 'Getting started',
+  clarification: 'Gathering details',
+  analysis: 'Analyzing requirements',
+  criteria_selection: 'Selecting criteria',
+  posting: 'Posting job',
+  awaiting_bids: 'Awaiting bids',
+  bid_selection: 'Reviewing bids',
+  execution: 'Agent working',
+  delivery_review: 'Reviewing delivery',
+  validation: 'Validating results',
+  completed: 'Completed',
+  status_inquiry: 'Checking status',
+};
 
 const MOCK_AGENT_REPLIES = [
   'I\'m working on that right now. Give me a moment to analyze the contract.',
@@ -33,14 +63,21 @@ const MOCK_AGENT_REPLIES = [
 ];
 
 export default function ChatScreen() {
-  const { id: jobId } = useLocalSearchParams<{ id: string }>();
+  const { id: chatId } = useLocalSearchParams<{ id: string }>();
   const { colors, typography } = useTheme();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
   const [agentTyping, setAgentTyping] = useState(false);
-  const [progress, setProgress] = useState('');
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [phase, setPhase] = useState<string>('greeting');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
   const mockReplyIndex = useRef(0);
+  const eventSourceRef = useRef<any>(null);
+  const retryCountRef = useRef(0);
+  const MAX_RETRIES = 5;
 
   const scrollToEnd = useCallback(() => {
     setTimeout(() => {
@@ -48,80 +85,405 @@ export default function ChatScreen() {
     }, 100);
   }, []);
 
-  // Load mock messages or connect SSE
+  // Initialize wallet
+  useEffect(() => {
+    (async () => {
+      try {
+        const w = await initWallet();
+        setWalletAddress(w.address);
+      } catch (e: any) {
+        console.error('[chat] wallet init failed:', e?.message);
+      }
+    })();
+  }, []);
+
+  // Load initial data
   useEffect(() => {
     if (USE_MOCKS) {
-      setMessages(MOCK_CHAT_MESSAGES);
-      setProgress('Agent is auditing the contract...');
+      // In mock mode, show greeting blocks
+      setMessages([
+        {
+          id: 'greeting-mock',
+          role: 'butler',
+          text: '',
+          timestamp: Date.now(),
+          blocks: GREETING_BLOCKS as GenUIBlock[],
+        },
+      ]);
+      setPhase('greeting');
       return;
     }
 
-    const es = connectSSE();
-    return () => {
-      es?.close();
-    };
-  }, []);
+    // If chatId is "new", start a fresh session
+    if (chatId === 'new') {
+      sendToButler({ message: '' }); // Trigger greeting
+      return;
+    }
 
-  const connectSSE = useCallback(() => {
-    const url = `${API_BASE}/v1/chat/${jobId}/stream`;
+    // Load existing session
+    loadSession(chatId);
+  }, [chatId]);
+
+  // Connect SSE when sessionId is available
+  useEffect(() => {
+    if (USE_MOCKS || !sessionId) return;
+
+    connectSSE(sessionId);
+    return () => {
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+    };
+  }, [sessionId]);
+
+  const loadSession = async (sid: string) => {
+    try {
+      setLoading(true);
+      const session = await api.getChatSession(sid);
+      setSessionId(session.sessionId);
+      setPhase(session.phase);
+
+      // Convert backend messages to local format
+      const loaded: Message[] = session.messages.map((m: any) => ({
+        id: m.id,
+        role: m.role,
+        text: '',
+        timestamp: new Date(m.timestamp).getTime(),
+        blocks: m.blocks,
+      }));
+      setMessages(loaded);
+    } catch (err) {
+      console.error('[chat] load session error:', err);
+      // Start fresh if session not found
+      sendToButler({ message: '' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const connectSSE = (sid: string) => {
     try {
       const EventSource = require('react-native-sse').default;
-      const eventSource = new EventSource(url);
+      const url = `${API_BASE}/v1/chat/${sid}/stream`;
 
-      eventSource.addEventListener('message', (event: any) => {
+      eventSourceRef.current?.close();
+      const es = new EventSource(url);
+      eventSourceRef.current = es;
+
+      es.addEventListener('message', (event: any) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'token') {
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === 'agent' && last.id === data.messageId) {
+          retryCountRef.current = 0;
+          setConnectionError(null);
+
+          switch (data.type) {
+            case 'connected':
+              break;
+
+            case 'block_start':
+              setAgentTyping(true);
+              break;
+
+            case 'block_delta':
+              // For streaming text blocks — append delta to existing block
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last && last.role === 'butler' && last.blocks) {
+                  const blockIdx = last.blocks.findIndex(
+                    (b) => b.id === data.blockId,
+                  );
+                  if (blockIdx >= 0 && last.blocks[blockIdx].type === 'text') {
+                    const updatedBlocks = [...last.blocks];
+                    updatedBlocks[blockIdx] = {
+                      ...updatedBlocks[blockIdx],
+                      content:
+                        (updatedBlocks[blockIdx].content || '') + data.delta,
+                    };
+                    return [
+                      ...prev.slice(0, -1),
+                      { ...last, blocks: updatedBlocks },
+                    ];
+                  }
+                }
+                return prev;
+              });
+              scrollToEnd();
+              break;
+
+            case 'block_complete':
+              // Full block received — add or replace in last butler message
+              setMessages((prev) => {
+                const last = prev[prev.length - 1];
+                if (last && last.role === 'butler') {
+                  const blocks = last.blocks || [];
+                  const existingIdx = blocks.findIndex(
+                    (b) => b.id === data.blockId,
+                  );
+                  let updatedBlocks: GenUIBlock[];
+                  if (existingIdx >= 0) {
+                    updatedBlocks = [...blocks];
+                    updatedBlocks[existingIdx] = data.block;
+                  } else {
+                    updatedBlocks = [...blocks, data.block];
+                  }
+                  return [
+                    ...prev.slice(0, -1),
+                    { ...last, blocks: updatedBlocks },
+                  ];
+                }
+                // Create new butler message
                 return [
-                  ...prev.slice(0, -1),
-                  { ...last, text: last.text + data.token },
+                  ...prev,
+                  {
+                    id: data.blockId,
+                    role: 'butler' as const,
+                    text: '',
+                    timestamp: Date.now(),
+                    blocks: [data.block],
+                  },
                 ];
-              }
-              return [
+              });
+              scrollToEnd();
+              break;
+
+            case 'phase_change':
+              setPhase(data.phase);
+              break;
+
+            case 'done':
+              setAgentTyping(false);
+              break;
+
+            case 'error':
+              setAgentTyping(false);
+              setMessages((prev) => [
                 ...prev,
                 {
-                  id: data.messageId,
-                  role: 'agent',
-                  text: data.token,
+                  id: `err-${Date.now()}`,
+                  role: 'butler',
+                  text: `Error: ${data.message}`,
                   timestamp: Date.now(),
                 },
-              ];
-            });
-            setAgentTyping(true);
-            scrollToEnd();
-          } else if (data.type === 'done') {
-            setAgentTyping(false);
-          } else if (data.type === 'progress') {
-            setProgress(data.status || '');
-          } else if (data.type === 'error') {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `err-${Date.now()}`,
-                role: 'agent',
-                text: `Error: ${data.message}`,
-                timestamp: Date.now(),
-              },
-            ]);
-            setAgentTyping(false);
+              ]);
+              break;
           }
         } catch {}
       });
 
-      eventSource.addEventListener('error', () => {
+      es.addEventListener('error', () => {
         setAgentTyping(false);
+        retryCountRef.current++;
+        if (retryCountRef.current <= MAX_RETRIES) {
+          const delay = Math.min(1000 * Math.pow(2, retryCountRef.current), 30000);
+          setTimeout(() => {
+            if (sessionId) connectSSE(sessionId);
+          }, delay);
+        } else {
+          setConnectionError('Connection lost. Pull down to retry.');
+        }
+      });
+    } catch (err) {
+      console.error('[chat] SSE connection error:', err);
+    }
+  };
+
+  const sendToButler = async (payload: {
+    message?: string;
+    formResponse?: { formId: string; values: Record<string, string> };
+    actionResponse?: {
+      actionId: string;
+      toolCall?: string;
+      toolArgs?: Record<string, unknown>;
+    };
+    criteriaResponse?: {
+      selectedIds: string[];
+      customCriteria?: string[];
+    };
+    tagsResponse?: { selectedTags: string[] };
+  }) => {
+    if (!walletAddress && !USE_MOCKS) {
+      console.warn('[chat] No wallet address yet');
+      return;
+    }
+
+    setAgentTyping(true);
+
+    if (USE_MOCKS) {
+      // Mock mode: simulate different block responses
+      await mockButlerResponse(payload);
+      setAgentTyping(false);
+      return;
+    }
+
+    try {
+      const result = await api.chatMessage({
+        sessionId: sessionId || undefined,
+        walletAddress: walletAddress!,
+        message: payload.message || '',
+        formResponse: payload.formResponse,
+        actionResponse: payload.actionResponse,
+        criteriaResponse: payload.criteriaResponse,
+        tagsResponse: payload.tagsResponse,
       });
 
-      return eventSource;
-    } catch {
-      return null;
-    }
-  }, [jobId, scrollToEnd]);
+      // Set session ID from response
+      if (!sessionId) {
+        setSessionId(result.sessionId);
+      }
 
-  const sendMessage = async () => {
+      setPhase(result.phase);
+
+      // Add butler response to messages
+      const butlerMsg: Message = {
+        id: result.message.id,
+        role: 'butler',
+        text: '',
+        timestamp: new Date(result.message.timestamp).getTime(),
+        blocks: result.message.blocks,
+      };
+      setMessages((prev) => [...prev, butlerMsg]);
+      scrollToEnd();
+    } catch (err) {
+      console.error('[chat] send error:', err);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: 'butler',
+          text: 'Something went wrong. Please try again.',
+          timestamp: Date.now(),
+        },
+      ]);
+    } finally {
+      setAgentTyping(false);
+    }
+  };
+
+  const mockButlerResponse = async (payload: any) => {
+    await new Promise((r) => setTimeout(r, 600 + Math.random() * 400));
+
+    if (payload.actionResponse) {
+      // Show clarification form after selecting a vertical
+      setPhase('clarification');
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `butler-${Date.now()}`,
+          role: 'butler',
+          text: '',
+          timestamp: Date.now(),
+          blocks: CLARIFICATION_BLOCKS as GenUIBlock[],
+        },
+      ]);
+    } else if (payload.formResponse) {
+      // Show analysis after form submission
+      setPhase('analysis');
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `butler-${Date.now()}`,
+          role: 'butler',
+          text: '',
+          timestamp: Date.now(),
+          blocks: ANALYSIS_BLOCKS as GenUIBlock[],
+        },
+      ]);
+    } else if (payload.message) {
+      // Plain text reply
+      const reply =
+        MOCK_AGENT_REPLIES[
+          mockReplyIndex.current % MOCK_AGENT_REPLIES.length
+        ];
+      mockReplyIndex.current++;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `butler-${Date.now()}`,
+          role: 'butler',
+          text: reply,
+          timestamp: Date.now(),
+        },
+      ]);
+    }
+    scrollToEnd();
+  };
+
+  // GenUI callbacks
+  const handleAction = (
+    actionId: string,
+    toolCall?: string,
+    toolArgs?: Record<string, unknown>,
+  ) => {
+    sendToButler({
+      actionResponse: { actionId, toolCall, toolArgs },
+    });
+  };
+
+  const handleFormSubmit = (formId: string, values: Record<string, string>) => {
+    // Add user's form submission as a visible message
+    const summary = Object.entries(values)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ');
+    if (summary) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user-form-${Date.now()}`,
+          role: 'user',
+          text: summary,
+          timestamp: Date.now(),
+        },
+      ]);
+    }
+
+    sendToButler({
+      formResponse: { formId, values },
+    });
+  };
+
+  const handleCriteriaChange = (
+    selectedIds: string[],
+    customCriteria?: string[],
+  ) => {
+    // Debounce: criteria changes fire on every toggle. Only send on
+    // explicit submit (via the action button).
+    // Store locally for now — the action handler will pick it up.
+    criteriaRef.current = { selectedIds, customCriteria };
+  };
+
+  const criteriaRef = useRef<{
+    selectedIds: string[];
+    customCriteria?: string[];
+  } | null>(null);
+
+  const handleTagsChange = (selectedTags: string[]) => {
+    tagsRef.current = selectedTags;
+  };
+
+  const tagsRef = useRef<string[]>([]);
+
+  // Override action handler to include accumulated criteria/tags
+  const handleActionWithContext = (
+    actionId: string,
+    toolCall?: string,
+    toolArgs?: Record<string, unknown>,
+  ) => {
+    if (actionId === 'confirm-criteria' && criteriaRef.current) {
+      sendToButler({
+        actionResponse: { actionId, toolCall, toolArgs },
+        criteriaResponse: criteriaRef.current,
+        tagsResponse: tagsRef.current.length > 0
+          ? { selectedTags: tagsRef.current }
+          : undefined,
+      });
+      criteriaRef.current = null;
+      tagsRef.current = [];
+      return;
+    }
+    handleAction(actionId, toolCall, toolArgs);
+  };
+
+  const sendTextMessage = async () => {
     const text = input.trim();
     if (!text) return;
 
@@ -133,64 +495,105 @@ export default function ChatScreen() {
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
-    setAgentTyping(true);
     scrollToEnd();
 
-    if (USE_MOCKS) {
-      // Simulate agent reply after a delay
-      setTimeout(() => {
-        const reply = MOCK_AGENT_REPLIES[mockReplyIndex.current % MOCK_AGENT_REPLIES.length];
-        mockReplyIndex.current++;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `agent-mock-${Date.now()}`,
-            role: 'agent',
-            text: reply,
-            timestamp: Date.now(),
-          },
-        ]);
-        setAgentTyping(false);
-        scrollToEnd();
-      }, 1200 + Math.random() * 1000);
-      return;
-    }
-
-    try {
-      await fetch(`${API_BASE}/v1/chat/${jobId}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
-      });
-    } catch {
-      setAgentTyping(false);
-    }
+    sendToButler({ message: text });
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
     const isUser = item.role === 'user';
+    const hasBlocks = item.blocks && item.blocks.length > 0;
+
+    if (isUser) {
+      return (
+        <View
+          style={[
+            styles.bubble,
+            styles.bubbleUser,
+            { backgroundColor: colors.tint },
+          ]}
+        >
+          <Text style={[typography.body, { color: '#FFFFFF' }]}>
+            {item.text}
+          </Text>
+          <Text
+            style={[
+              typography.caption2,
+              {
+                color: 'rgba(255,255,255,0.6)',
+                alignSelf: 'flex-end',
+                marginTop: 4,
+              },
+            ]}
+          >
+            {new Date(item.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </Text>
+        </View>
+      );
+    }
+
+    if (hasBlocks) {
+      return (
+        <View
+          style={[
+            styles.bubble,
+            styles.bubbleAgent,
+            styles.blocksBubble,
+            { backgroundColor: colors.secondarySystemBackground },
+          ]}
+        >
+          {item.blocks!.map((block) => (
+            <View key={block.id} style={styles.blockWrapper}>
+              <BlockRenderer
+                block={block}
+                onAction={handleActionWithContext}
+                onFormSubmit={handleFormSubmit}
+                onCriteriaChange={handleCriteriaChange}
+                onTagsChange={handleTagsChange}
+              />
+            </View>
+          ))}
+          <Text
+            style={[
+              typography.caption2,
+              {
+                color: colors.tertiaryLabel,
+                alignSelf: 'flex-end',
+                marginTop: 4,
+              },
+            ]}
+          >
+            {new Date(item.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </Text>
+        </View>
+      );
+    }
+
+    // Plain text butler message
+    if (!item.text) return null;
+
     return (
       <View
         style={[
           styles.bubble,
-          isUser
-            ? [styles.bubbleUser, { backgroundColor: colors.tint }]
-            : [styles.bubbleAgent, { backgroundColor: colors.secondarySystemBackground }],
+          styles.bubbleAgent,
+          { backgroundColor: colors.secondarySystemBackground },
         ]}
       >
-        <Text
-          style={[
-            typography.body,
-            { color: isUser ? '#FFFFFF' : colors.label },
-          ]}
-        >
+        <Text style={[typography.body, { color: colors.label }]}>
           {item.text}
         </Text>
         <Text
           style={[
             typography.caption2,
             {
-              color: isUser ? 'rgba(255,255,255,0.6)' : colors.tertiaryLabel,
+              color: colors.tertiaryLabel,
               alignSelf: 'flex-end',
               marginTop: 4,
             },
@@ -205,29 +608,62 @@ export default function ChatScreen() {
     );
   };
 
+  if (loading) {
+    return (
+      <View
+        style={[
+          styles.centered,
+          { backgroundColor: colors.systemBackground },
+        ]}
+      >
+        <ActivityIndicator size="large" color={colors.tint} />
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.systemBackground }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={90}
     >
-      {/* Progress bar */}
-      {progress !== '' && (
+      {/* Phase indicator */}
+      <View
+        style={[
+          styles.phaseBar,
+          {
+            backgroundColor: colors.secondarySystemBackground,
+            borderBottomColor: colors.separator,
+          },
+        ]}
+      >
         <View
           style={[
-            styles.progressBar,
+            styles.phaseDot,
             {
-              backgroundColor: colors.secondarySystemBackground,
-              borderBottomColor: colors.separator,
+              backgroundColor:
+                phase === 'completed'
+                  ? colors.systemGreen
+                  : colors.tint,
             },
           ]}
+        />
+        <Text
+          style={[typography.footnote, { color: colors.secondaryLabel }]}
         >
-          <View style={[styles.progressDot, { backgroundColor: colors.tint }]} />
-          <Text style={[typography.footnote, { color: colors.secondaryLabel }]}>
-            {progress}
+          {PHASE_LABELS[phase] || phase}
+        </Text>
+        {connectionError && (
+          <Text
+            style={[
+              typography.caption2,
+              { color: colors.destructive, marginLeft: 'auto' },
+            ]}
+          >
+            {connectionError}
           </Text>
-        </View>
-      )}
+        )}
+      </View>
 
       {/* Messages */}
       <FlatList
@@ -242,11 +678,31 @@ export default function ChatScreen() {
       {/* Typing indicator */}
       {agentTyping && (
         <View style={styles.typingRow}>
-          <View style={[styles.typingDot, { backgroundColor: colors.tint, opacity: 0.6 }]} />
-          <View style={[styles.typingDot, { backgroundColor: colors.tint, opacity: 0.4 }]} />
-          <View style={[styles.typingDot, { backgroundColor: colors.tint, opacity: 0.2 }]} />
-          <Text style={[typography.caption1, { color: colors.tertiaryLabel, marginLeft: 4 }]}>
-            Agent is thinking...
+          <View
+            style={[
+              styles.typingDot,
+              { backgroundColor: colors.tint, opacity: 0.6 },
+            ]}
+          />
+          <View
+            style={[
+              styles.typingDot,
+              { backgroundColor: colors.tint, opacity: 0.4 },
+            ]}
+          />
+          <View
+            style={[
+              styles.typingDot,
+              { backgroundColor: colors.tint, opacity: 0.2 },
+            ]}
+          />
+          <Text
+            style={[
+              typography.caption1,
+              { color: colors.tertiaryLabel, marginLeft: 4 },
+            ]}
+          >
+            Butler is thinking...
           </Text>
         </View>
       )}
@@ -278,7 +734,7 @@ export default function ChatScreen() {
           multiline
           maxLength={2000}
           returnKeyType="send"
-          onSubmitEditing={sendMessage}
+          onSubmitEditing={sendTextMessage}
           blurOnSubmit={false}
         />
         <TouchableOpacity
@@ -289,7 +745,7 @@ export default function ChatScreen() {
               opacity: input.trim() ? 1 : 0.4,
             },
           ]}
-          onPress={sendMessage}
+          onPress={sendTextMessage}
           disabled={!input.trim()}
         >
           <Ionicons name="arrow-up" size={20} color="#FFFFFF" />
@@ -300,7 +756,12 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  progressBar: {
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  phaseBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
@@ -308,7 +769,7 @@ const styles = StyleSheet.create({
     gap: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  progressDot: {
+  phaseDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
@@ -330,6 +791,12 @@ const styles = StyleSheet.create({
   bubbleAgent: {
     alignSelf: 'flex-start',
     borderBottomLeftRadius: 4,
+  },
+  blocksBubble: {
+    maxWidth: '95%',
+  },
+  blockWrapper: {
+    marginBottom: 10,
   },
   typingRow: {
     flexDirection: 'row',

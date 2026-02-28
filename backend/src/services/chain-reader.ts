@@ -55,6 +55,10 @@ export class ChainReader {
   constructor() {
     const network = new ethers.Network('arc-testnet', 5042002);
     this.provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
+    // Disable ENS resolution — this chain has no ENS registry
+    this.provider.resolveName = async (name: string) => {
+      try { return ethers.getAddress(name); } catch { return null; }
+    };
     this.jobRegistry = new Contract(
       config.jobRegistryAddress || '',
       JOB_REGISTRY_ABI,

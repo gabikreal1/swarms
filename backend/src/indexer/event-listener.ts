@@ -114,6 +114,11 @@ export class EventListener {
       this.provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
     }
 
+    // Disable ENS resolution — this chain has no ENS registry
+    this.provider.resolveName = async (name: string) => {
+      try { return ethers.getAddress(name); } catch { return null; }
+    };
+
     this.orderBook = new Contract(config.orderBookAddress, ORDER_BOOK_ABI, this.provider);
     this.agentRegistry = new Contract(config.agentRegistryAddress, AGENT_REGISTRY_ABI, this.provider);
     this.reputationToken = new Contract(config.reputationTokenAddress, REPUTATION_TOKEN_ABI, this.provider);

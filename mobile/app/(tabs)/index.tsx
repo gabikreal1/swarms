@@ -10,11 +10,11 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { createPublicClient, http, formatUnits } from 'viem';
+import { createPublicClient, http, formatUnits, erc20Abi } from 'viem';
 import { useTheme } from '../../src/theme/useTheme';
 import { api } from '../../src/api/client';
 import { initWallet, WalletState } from '../../src/wallet/circle';
-import { arcTestnet } from '../../src/config/chains';
+import { arcTestnet, USDC_ADDRESS, USDC_DECIMALS } from '../../src/config/chains';
 import { Section } from '../../src/components/ios/Section';
 import { SectionRow } from '../../src/components/ios/SectionRow';
 import { Button } from '../../src/components/ios/Button';
@@ -63,12 +63,15 @@ export default function HomeTab() {
   const fetchBalance = useCallback(async () => {
     if (!wallet?.address) return;
     try {
-      const raw = await publicClient.getBalance({
-        address: wallet.address as `0x${string}`,
+      const raw = await publicClient.readContract({
+        address: USDC_ADDRESS,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [wallet.address as `0x${string}`],
       });
-      setBalance(formatUnits(raw, 6));
+      setBalance(formatUnits(raw, USDC_DECIMALS));
     } catch {
-      setBalance('—');
+      setBalance('0');
     }
   }, [wallet]);
 

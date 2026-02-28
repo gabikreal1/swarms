@@ -1,3 +1,4 @@
+import 'react-native-get-random-values';
 import { Stack } from 'expo-router';
 import { useTheme } from '../src/theme/useTheme';
 import { NotificationProvider } from '../src/contexts/NotificationContext';

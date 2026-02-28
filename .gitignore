@@ -29,6 +29,9 @@ mobile/.expo/
 mobile/ios/
 mobile/android/
 
+# Claude Code
+.claude/worktrees/
+
 # Misc
 *.log
 coverage/

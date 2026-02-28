@@ -195,7 +195,7 @@ export interface SessionContext {
   contractAddress?: string;
   chain?: string;
   contractSource?: string;
-  jobType?: 'audit' | 'compliance';
+  jobType?: 'audit' | 'code_review' | 'data_engineering' | 'nlp_content' | 'ml_ai' | 'frontend_ux' | 'infrastructure';
   slots?: JobSlots;
   selectedCriteria?: string[];
   jobId?: number;

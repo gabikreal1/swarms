@@ -1,5 +1,5 @@
 // Toggle mock mode: set to false to use real backend + wallet
-export const USE_MOCKS = true;
+export const USE_MOCKS = false;
 
 // Simulated latency range (ms) — makes UI feel realistic
 export const MOCK_DELAY = { min: 300, max: 800 };
@@ -211,5 +211,106 @@ export const MOCK_NOTIFICATIONS = [
     title: 'Validation Pending',
     body: 'Delivery for "Optimize gas usage" is awaiting validation',
     jobId: '4',
+  },
+];
+
+// ─── Butler Chat GenUI Blocks ────────────────────────────
+
+export const GREETING_BLOCKS = [
+  {
+    id: 'greeting-text',
+    type: 'text' as const,
+    content: 'Welcome to the SWARMS Agent Marketplace! I can help you post jobs across multiple verticals. What kind of task do you need help with?',
+  },
+  {
+    id: 'greeting-actions',
+    type: 'action' as const,
+    actions: [
+      { id: 'v-audit', label: 'Smart Contract Audit', variant: 'primary' as const, toolCall: 'analyze_requirements', toolArgs: { jobType: 'audit' } },
+      { id: 'v-code-review', label: 'Code Review', variant: 'secondary' as const, toolCall: 'analyze_requirements', toolArgs: { jobType: 'code_review' } },
+      { id: 'v-data', label: 'Data Engineering', variant: 'secondary' as const, toolCall: 'analyze_requirements', toolArgs: { jobType: 'data_engineering' } },
+      { id: 'v-nlp', label: 'NLP / Content', variant: 'secondary' as const, toolCall: 'analyze_requirements', toolArgs: { jobType: 'nlp_content' } },
+      { id: 'v-ml', label: 'ML / AI', variant: 'secondary' as const, toolCall: 'analyze_requirements', toolArgs: { jobType: 'ml_ai' } },
+      { id: 'v-frontend', label: 'Frontend / UX', variant: 'secondary' as const, toolCall: 'analyze_requirements', toolArgs: { jobType: 'frontend_ux' } },
+      { id: 'v-infra', label: 'Infrastructure / DevOps', variant: 'secondary' as const, toolCall: 'analyze_requirements', toolArgs: { jobType: 'infrastructure' } },
+    ],
+    layout: 'vertical' as const,
+  },
+];
+
+export const CLARIFICATION_BLOCKS = [
+  {
+    id: 'clarify-text',
+    type: 'text' as const,
+    content: 'Great! Let me gather some details about your job. Please fill in what you can:',
+  },
+  {
+    id: 'clarify-form',
+    type: 'form' as const,
+    formId: 'job-details',
+    fields: [
+      {
+        name: 'jobType',
+        label: 'Job Type',
+        type: 'select' as const,
+        required: true,
+        options: [
+          { label: 'Smart Contract Audit', value: 'audit' },
+          { label: 'Code Review', value: 'code_review' },
+          { label: 'Data Engineering', value: 'data_engineering' },
+          { label: 'NLP / Content', value: 'nlp_content' },
+          { label: 'ML / AI', value: 'ml_ai' },
+          { label: 'Frontend / UX', value: 'frontend_ux' },
+          { label: 'Infrastructure / DevOps', value: 'infrastructure' },
+        ],
+      },
+      {
+        name: 'description',
+        label: 'Job Description',
+        type: 'textarea' as const,
+        placeholder: 'Describe what you need done...',
+        required: true,
+      },
+      {
+        name: 'budget',
+        label: 'Budget (USDC)',
+        type: 'number' as const,
+        placeholder: '100',
+        validation: { min: 1 },
+      },
+      {
+        name: 'deadline',
+        label: 'Deadline',
+        type: 'text' as const,
+        placeholder: 'e.g., 2 weeks, March 15',
+      },
+    ],
+    submitLabel: 'Analyze Job',
+    cancelLabel: 'Cancel',
+  },
+];
+
+export const ANALYSIS_BLOCKS = [
+  {
+    id: 'analysis-text',
+    type: 'text' as const,
+    content: 'Here\'s my analysis of your job requirements:',
+  },
+  {
+    id: 'analysis-table',
+    type: 'table' as const,
+    columns: [
+      { key: 'field', label: 'Category', align: 'left' as const },
+      { key: 'value', label: 'Detail', align: 'left' as const },
+      { key: 'status', label: 'Status', align: 'center' as const },
+    ],
+    rows: [
+      { field: 'Job Type', value: 'Data Engineering', status: 'Detected' },
+      { field: 'Complexity', value: 'Moderate', status: 'Inferred' },
+      { field: 'Estimated Cost', value: '15 USDC', status: 'Estimated' },
+      { field: 'Suggested Criteria', value: '8 criteria available', status: 'Ready' },
+      { field: 'Suggested Tags', value: 'data, pipeline, etl', status: 'Suggested' },
+    ],
+    sortable: false,
   },
 ];

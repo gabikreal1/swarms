@@ -168,11 +168,15 @@ export class EventListener {
     currentBlock: number,
   ): Promise<void> {
     const lastBlock = await getLastBlock(name);
-    const fromBlock = Number(lastBlock) === 0 && this.config.startBlock
+    let fromBlock = Number(lastBlock) === 0 && this.config.startBlock
       ? this.config.startBlock
       : Number(lastBlock) + 1;
 
-    if (fromBlock > currentBlock) return;
+    if (fromBlock > currentBlock) {
+      console.warn(`[EventListener] ${name}: fromBlock ${fromBlock} is ahead of chain head ${currentBlock}, resetting to 0`);
+      fromBlock = 0;
+      await setLastBlock(name, 0n);
+    }
 
     console.log(`[EventListener] ${name}: scanning blocks ${fromBlock} → ${currentBlock}`);
 

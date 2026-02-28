@@ -149,13 +149,17 @@ export class EventListener {
   // ──────────────────────────────────────────────────────────
 
   private async poll(): Promise<void> {
-    const currentBlock = await this.provider.getBlockNumber();
-    await Promise.all([
-      this.processContractEvents("OrderBook", this.orderBook, currentBlock),
-      this.processContractEvents("AgentRegistry", this.agentRegistry, currentBlock),
-      this.processContractEvents("ReputationToken", this.reputationToken, currentBlock),
-      this.processContractEvents("Escrow", this.escrowContract, currentBlock),
-    ]);
+    try {
+      const currentBlock = await this.provider.getBlockNumber();
+      await Promise.all([
+        this.processContractEvents("OrderBook", this.orderBook, currentBlock),
+        this.processContractEvents("AgentRegistry", this.agentRegistry, currentBlock),
+        this.processContractEvents("ReputationToken", this.reputationToken, currentBlock),
+        this.processContractEvents("Escrow", this.escrowContract, currentBlock),
+      ]);
+    } catch (err) {
+      console.error("[EventListener] poll failed:", (err as Error).message);
+    }
   }
 
   private async processContractEvents(
@@ -170,24 +174,43 @@ export class EventListener {
 
     if (fromBlock > currentBlock) return;
 
+    console.log(`[EventListener] ${name}: scanning blocks ${fromBlock} → ${currentBlock}`);
+
     // Process in chunks to avoid RPC limits
     const chunkSize = 2_000;
     let start = fromBlock;
+    let totalLogs = 0;
 
     while (start <= currentBlock) {
       const end = Math.min(start + chunkSize - 1, currentBlock);
-      const logs = await contract.queryFilter("*", start, end);
 
-      for (const log of logs) {
+      // Query each event individually since some RPCs don't support "*" wildcard
+      const eventNames = contract.interface.fragments
+        .filter((f): f is ethers.EventFragment => f.type === "event")
+        .map((f) => f.name);
+
+      for (const eventName of eventNames) {
         try {
-          await this.handleLog(name, contract, log);
+          const logs = await contract.queryFilter(eventName, start, end);
+          totalLogs += logs.length;
+          for (const log of logs) {
+            try {
+              await this.handleLog(name, contract, log);
+            } catch (err) {
+              console.error(`[EventListener] error handling ${name}:${eventName} at block ${log.blockNumber}:`, err);
+            }
+          }
         } catch (err) {
-          console.error(`[EventListener] error handling ${name} log at block ${log.blockNumber}:`, err);
+          console.error(`[EventListener] queryFilter ${name}:${eventName} failed:`, (err as Error).message);
         }
       }
 
       await setLastBlock(name, BigInt(end));
       start = end + 1;
+    }
+
+    if (totalLogs > 0) {
+      console.log(`[EventListener] ${name}: processed ${totalLogs} events`);
     }
   }
 

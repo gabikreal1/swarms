@@ -295,20 +295,17 @@ router.post('/message', async (req: Request, res: Response) => {
 
     switch (session.phase) {
       case 'greeting': {
-        if (hasActionResponse && body.actionResponse!.toolCall) {
-          // User selected a vertical
-          const toolResult = executeButlerTool(
-            body.actionResponse!.toolCall,
-            body.actionResponse!.toolArgs || {},
-          );
-          updatedContext = updateContextFromToolResult(
-            updatedContext,
-            body.actionResponse!.toolCall,
-            toolResult,
-          );
-          responseBlocks = buildClarificationBlocks(
-            updatedContext.jobType,
-          );
+        if (hasActionResponse) {
+          // User selected a vertical — set jobType directly from toolArgs
+          const jobType = (body.actionResponse!.toolArgs?.jobType as string) || 'audit';
+          updatedContext.jobType = jobType as any;
+          responseBlocks = buildClarificationBlocks(jobType);
+          nextPhase = 'clarification';
+        } else if (message) {
+          // User typed a message — infer job type
+          const toolResult = executeButlerTool('analyze_requirements', { description: message });
+          updatedContext.jobType = (toolResult.jobType as string) as any;
+          responseBlocks = buildClarificationBlocks(updatedContext.jobType);
           nextPhase = 'clarification';
         } else {
           // Show greeting

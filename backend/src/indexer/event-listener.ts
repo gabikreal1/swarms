@@ -157,12 +157,11 @@ export class EventListener {
   private async poll(): Promise<void> {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      await Promise.all([
-        this.processContractEvents("OrderBook", this.orderBook, currentBlock),
-        this.processContractEvents("AgentRegistry", this.agentRegistry, currentBlock),
-        this.processContractEvents("ReputationToken", this.reputationToken, currentBlock),
-        this.processContractEvents("Escrow", this.escrowContract, currentBlock),
-      ]);
+      // Process sequentially to avoid RPC rate limits
+      await this.processContractEvents("OrderBook", this.orderBook, currentBlock);
+      await this.processContractEvents("AgentRegistry", this.agentRegistry, currentBlock);
+      await this.processContractEvents("ReputationToken", this.reputationToken, currentBlock);
+      await this.processContractEvents("Escrow", this.escrowContract, currentBlock);
     } catch (err) {
       console.error("[EventListener] poll failed:", (err as Error).message);
     }
@@ -186,10 +185,11 @@ export class EventListener {
 
     console.log(`[EventListener] ${name}: scanning blocks ${fromBlock} → ${currentBlock}`);
 
-    // Process in chunks to avoid RPC limits
-    const chunkSize = 2_000;
+    // Process in chunks to avoid RPC limits (10k blocks, delay between queries)
+    const chunkSize = 10_000;
     let start = fromBlock;
     let totalLogs = 0;
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
     while (start <= currentBlock) {
       const end = Math.min(start + chunkSize - 1, currentBlock);
@@ -213,6 +213,8 @@ export class EventListener {
         } catch (err) {
           console.error(`[EventListener] queryFilter ${name}:${eventName} failed:`, (err as Error).message);
         }
+        // Rate limit: wait 150ms between queries to stay under 20/sec
+        await delay(150);
       }
 
       await setLastBlock(name, BigInt(end));

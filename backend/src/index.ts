@@ -105,6 +105,13 @@ async function start() {
 
     // Start on-chain event indexer if contract addresses are configured
     const { orderBookAddress, agentRegistryAddress, reputationTokenAddress, escrowAddress, jobRegistryAddress } = config;
+    console.log('[EventListener] config check:', {
+      orderBook: !!orderBookAddress,
+      agentRegistry: !!agentRegistryAddress,
+      reputationToken: !!reputationTokenAddress,
+      escrow: !!escrowAddress,
+      jobRegistry: !!jobRegistryAddress,
+    });
     if (orderBookAddress && agentRegistryAddress && reputationTokenAddress && escrowAddress && jobRegistryAddress) {
       const listener = new EventListener({
         rpcUrl: config.rpcUrl,

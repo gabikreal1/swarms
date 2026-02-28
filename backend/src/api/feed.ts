@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { FeedService, FeedFilters } from '../services/feed';
+import { ChainReader } from '../services/chain-reader';
 
 const router = Router();
 const feedService = new FeedService();
+const chainReader = new ChainReader();
 
 // ────────────────────────────────────────────────────────────
 // GET /v1/feed/jobs
@@ -75,7 +77,45 @@ router.get('/jobs', async (req: Request, res: Response) => {
       }
     }
 
-    const result = await feedService.getJobFeed(filters);
+    // Try DB first, fall back to on-chain
+    let result;
+    try {
+      result = await feedService.getJobFeed(filters);
+    } catch {
+      result = { items: [], nextCursor: null };
+    }
+
+    if (result.items.length === 0) {
+      // Read directly from chain
+      try {
+        const onChainJobs = await chainReader.getJobs();
+        let filtered = onChainJobs;
+
+        if (filters.tags?.length) {
+          filtered = filtered.filter((j) =>
+            filters.tags!.some((t) => j.tags.includes(t)),
+          );
+        }
+        if (filters.status != null) {
+          const statusStr = ['open', 'in_progress', 'delivered', 'completed', 'disputed'][filters.status] || '';
+          filtered = filtered.filter((j) => j.status === statusStr);
+        }
+        if (req.query.poster) {
+          const poster = (req.query.poster as string).toLowerCase();
+          filtered = filtered.filter((j) => j.poster.toLowerCase() === poster);
+        }
+
+        res.json({
+          data: filtered,
+          nextCursor: null,
+          total: filtered.length,
+        });
+        return;
+      } catch (chainErr) {
+        console.error('[feed] chain reader fallback error:', chainErr);
+      }
+    }
+
     res.json({
       data: result.items,
       nextCursor: result.nextCursor,
@@ -117,6 +157,29 @@ router.get('/jobs/recommended', async (req: Request, res: Response) => {
     res.json({ data: recommendations, total: recommendations.length });
   } catch (err) {
     console.error('[feed] GET /jobs/recommended error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// GET /v1/feed/jobs/:id — single job from chain
+// ────────────────────────────────────────────────────────────
+
+router.get('/jobs/:id', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (Number.isNaN(id)) {
+      res.status(400).json({ error: 'id must be a number' });
+      return;
+    }
+    const job = await chainReader.getJob(id);
+    if (!job) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
+    res.json({ data: job });
+  } catch (err) {
+    console.error('[feed] GET /jobs/:id error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

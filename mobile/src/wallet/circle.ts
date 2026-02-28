@@ -1,9 +1,12 @@
 // Circle Modular Wallet with passkey auth
-// Uses @circle-fin/modular-wallets-core (install when ready for production)
 
 import { USE_MOCKS, mockDelay, MOCK_WALLET } from '../config/mock';
 import { createPublicClient, http } from 'viem';
 import { arcTestnet } from '../config/chains';
+import {
+  toWebAuthnCredential,
+  toCircleSmartAccount,
+} from '@circle-fin/modular-wallets-core';
 
 export interface WalletState {
   address: string;
@@ -12,17 +15,9 @@ export interface WalletState {
 
 const CIRCLE_CLIENT_KEY = process.env.EXPO_PUBLIC_CIRCLE_CLIENT_KEY || '';
 
-// Lazy-load Circle SDK so the app doesn't crash if the package isn't installed
-async function loadCircleSDK() {
-  try {
-    const sdk = require('@circle-fin/modular-wallets-core');
-    return sdk;
-  } catch {
-    throw new Error(
-      '@circle-fin/modular-wallets-core is not installed. Run: npm install @circle-fin/modular-wallets-core'
-    );
-  }
-}
+// In Expo Go the bundle ID is host.exp.Exponent; in production it's swarms.market
+const __DEV_MODE__ = typeof __DEV__ !== 'undefined' && __DEV__;
+const RP_ID = __DEV_MODE__ ? 'localhost' : 'swarms.market';
 
 export async function initWallet(): Promise<WalletState> {
   if (USE_MOCKS) {
@@ -30,11 +25,12 @@ export async function initWallet(): Promise<WalletState> {
     return MOCK_WALLET;
   }
 
-  const { toWebAuthnCredential, toCircleSmartAccount } = await loadCircleSDK();
+  console.log('[wallet] Initializing Circle wallet, rpId:', RP_ID);
+  console.log('[wallet] Client key present:', !!CIRCLE_CLIENT_KEY);
 
   const credential = await toWebAuthnCredential({
     clientKey: CIRCLE_CLIENT_KEY,
-    rpId: 'swarms.market',
+    rpId: RP_ID,
   });
 
   const account = await toCircleSmartAccount({
@@ -56,11 +52,9 @@ export async function createGaslessBundler() {
     throw new Error('Bundler not available in mock mode');
   }
 
-  const { toWebAuthnCredential, toCircleSmartAccount } = await loadCircleSDK();
-
   const credential = await toWebAuthnCredential({
     clientKey: CIRCLE_CLIENT_KEY,
-    rpId: 'swarms.market',
+    rpId: RP_ID,
   });
 
   const account = await toCircleSmartAccount({

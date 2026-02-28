@@ -1,5 +1,5 @@
 // Toggle mock mode: set to false to use real backend + wallet
-export const USE_MOCKS = true;
+export const USE_MOCKS = false;
 
 // Simulated latency range (ms) — makes UI feel realistic
 export const MOCK_DELAY = { min: 300, max: 800 };

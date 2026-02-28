@@ -6,6 +6,7 @@ import {
   RefreshControl,
   StyleSheet,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -56,8 +57,8 @@ export default function HomeTab() {
       try {
         const w = await initWallet();
         setWallet(w);
-      } catch {
-        // Wallet init may fail in dev
+      } catch (e: any) {
+        console.error('[wallet] Auto-init failed:', e?.message || e);
       }
       setLoading(false);
     })();
@@ -122,7 +123,9 @@ export default function HomeTab() {
               try {
                 const w = await initWallet();
                 setWallet(w);
-              } catch {}
+              } catch (e: any) {
+                Alert.alert('Wallet Error', e?.message || 'Failed to connect wallet');
+              }
             }
           }}
         />

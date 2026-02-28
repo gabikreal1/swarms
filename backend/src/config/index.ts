@@ -25,6 +25,10 @@ const configSchema = z.object({
   rpcUrl: z.string().default('https://rpc.testnet.arc.network'),
   chainId: z.coerce.number().default(5042002),
   orderBookAddress: z.string().optional(),
+  agentRegistryAddress: z.string().optional(),
+  reputationTokenAddress: z.string().optional(),
+  escrowAddress: z.string().optional(),
+  jobRegistryAddress: z.string().optional(),
   validationOracleAddress: z.string().optional(),
 
   // IPFS
@@ -55,6 +59,10 @@ export const config = configSchema.parse({
   rpcUrl: process.env.RPC_URL,
   chainId: process.env.CHAIN_ID,
   orderBookAddress: process.env.ORDERBOOK_ADDRESS,
+  agentRegistryAddress: process.env.AGENT_REGISTRY_ADDRESS,
+  reputationTokenAddress: process.env.REPUTATION_TOKEN_ADDRESS,
+  escrowAddress: process.env.ESCROW_ADDRESS,
+  jobRegistryAddress: process.env.JOB_REGISTRY_ADDRESS,
   validationOracleAddress: process.env.VALIDATION_ORACLE_ADDRESS,
   pinataApiKey: process.env.PINATA_API_KEY,
   pinataSecretKey: process.env.PINATA_SECRET_KEY,

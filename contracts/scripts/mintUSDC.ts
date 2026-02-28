@@ -6,7 +6,7 @@ import * as path from "path";
  * Mint MockUSDC to specified addresses
  * 
  * Usage:
- * npx hardhat run scripts/mintUSDC.ts --network neoxTestnet
+ * npx hardhat run scripts/mintUSDC.ts --network arcTestnet
  */
 
 async function main() {
@@ -15,11 +15,11 @@ async function main() {
   // Load deployment file
   const network = await ethers.provider.getNetwork();
   const chainId = network.chainId.toString();
-  const deploymentPath = path.join(__dirname, "../deployments", `neox-testnet-${chainId}.json`);
+  const deploymentPath = path.join(__dirname, "../deployments", `arc-testnet-${chainId}.json`);
   
   if (!fs.existsSync(deploymentPath)) {
     console.error(`❌ Deployment file not found: ${deploymentPath}`);
-    console.log("Please deploy contracts first using: npx hardhat run scripts/deploy.ts --network neoxTestnet");
+    console.log("Please deploy contracts first using: npx hardhat run scripts/deploy.ts --network arcTestnet");
     process.exit(1);
   }
 
@@ -34,7 +34,7 @@ async function main() {
 
   // Get addresses from environment or use defaults
   const addresses = [
-    { name: "Butler (User)", address: process.env.BUTLER_ADDRESS || process.env.NEOX_ADDRESS },
+    { name: "Butler (User)", address: process.env.BUTLER_ADDRESS },
     { name: "Worker Agent", address: process.env.WORKER_ADDRESS },
     { name: "Manager Agent", address: process.env.MANAGER_ADDRESS },
     { name: "Scraper Agent", address: process.env.SCRAPER_ADDRESS },
@@ -44,7 +44,7 @@ async function main() {
   if (addresses.length === 0) {
     console.error("❌ No addresses found in environment variables.");
     console.log("\nPlease set the following in your .env file:");
-    console.log("  BUTLER_ADDRESS=0x...  (or NEOX_ADDRESS)");
+    console.log("  BUTLER_ADDRESS=0x...");
     console.log("  WORKER_ADDRESS=0x...");
     console.log("  MANAGER_ADDRESS=0x...");
     console.log("  SCRAPER_ADDRESS=0x...");

@@ -4,8 +4,6 @@ import "@nomicfoundation/hardhat-toolbox";
 
 dotenvConfig();
 
-const accounts = process.env.NEOX_PRIVATE_KEY ? [process.env.NEOX_PRIVATE_KEY] : [];
-
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.24",
@@ -20,20 +18,6 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       chainId: 31337
-    },
-    // NeoX Testnet T4
-    neoxTestnet: {
-      url: process.env.NEOX_RPC_URL || "https://testnet.rpc.banelabs.org",
-      chainId: 12227332,
-      accounts,
-      gasPrice: 40000000000, // 40 gwei
-    },
-    // NeoX Mainnet
-    neoxMainnet: {
-      url: "https://mainnet-1.rpc.banelabs.org",
-      chainId: 47763,
-      accounts,
-      gasPrice: 40000000000, // 40 gwei
     },
     // ARC Testnet
     arcTestnet: {

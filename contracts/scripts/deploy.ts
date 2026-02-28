@@ -43,12 +43,8 @@ async function main() {
   
   // Determine network name for file naming
   let networkName: string;
-  if (chainId === 12227332) {
-    networkName = "neox-testnet";
-  } else if (chainId === 47763) {
-    networkName = "neox-mainnet";
-  } else if (chainId === 5042002) {
-    networkName = "arc"; // legacy
+  if (chainId === 5042002) {
+    networkName = "arc-testnet";
   } else {
     networkName = `chain-${chainId}`;
   }
@@ -226,7 +222,7 @@ main().catch((error) => {
 
 async function buildTxOverrides(provider?: Provider | null) {
   // Support both env var names for compatibility
-  const customGwei = process.env.NEOX_TX_GWEI || process.env.ARC_TX_GWEI;
+  const customGwei = process.env.ARC_TX_GWEI;
   if (customGwei) {
     const fee = ethers.parseUnits(customGwei, "gwei");
     return {

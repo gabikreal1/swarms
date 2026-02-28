@@ -1,5 +1,5 @@
 """
-Example SpoonOS Agent for NeoxPrep Marketplace
+Example SpoonOS Agent for SWARMS Marketplace
 This agent demonstrates how to import and use the contract environment module.
 """
 
@@ -9,9 +9,9 @@ import os
 from typing import Dict, List, Optional
 
 
-class NeoxPrepSpoonAgent:
+class SwarmsSpoonAgent:
     """
-    SpoonOS agent that interacts with the NeoxPrep marketplace contracts.
+    SpoonOS agent that interacts with the SWARMS marketplace contracts.
     """
 
     def __init__(self, env_mode: str = "read_only"):
@@ -161,10 +161,10 @@ class NeoxPrepSpoonAgent:
 
 # Example usage (for testing locally)
 if __name__ == "__main__":
-    print("=== NeoxPrep SpoonOS Agent Example ===\n")
+    print("=== SWARMS SpoonOS Agent Example ===\n")
 
     # Initialize the agent
-    agent = NeoxPrepSpoonAgent(env_mode="read_only")
+    agent = SwarmsSpoonAgent(env_mode="read_only")
 
     # Print environment info
     print("Environment Info:")

@@ -3,7 +3,16 @@
 
 import { USE_MOCKS, mockDelay, MOCK_WALLET } from '../config/mock';
 import * as SecureStore from 'expo-secure-store';
-import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import * as Crypto from 'expo-crypto';
+import { privateKeyToAccount } from 'viem/accounts';
+
+async function generateKey(): Promise<`0x${string}`> {
+  const randomBytes = await Crypto.getRandomBytesAsync(32);
+  const hex = Array.from(new Uint8Array(randomBytes))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `0x${hex}`;
+}
 
 export interface WalletState {
   address: string;
@@ -21,7 +30,7 @@ export async function initWallet(): Promise<WalletState> {
   let pk = await SecureStore.getItemAsync(STORAGE_KEY);
 
   if (!pk) {
-    pk = generatePrivateKey();
+    pk = await generateKey();
     await SecureStore.setItemAsync(STORAGE_KEY, pk);
     console.log('[wallet] Generated new wallet');
   } else {

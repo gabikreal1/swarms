@@ -67,6 +67,6 @@ export const config = configSchema.parse({
   pinataApiKey: process.env.PINATA_API_KEY,
   pinataSecretKey: process.env.PINATA_SECRET_KEY,
   databaseUrl: process.env.DATABASE_URL,
-  paymentReceiverAddress: process.env.PAYMENT_RECEIVER_ADDRESS,
-  usdcAddress: process.env.USDC_ADDRESS,
+  paymentReceiverAddress: process.env.PAYMENT_RECEIVER_ADDRESS?.trim(),
+  usdcAddress: process.env.USDC_ADDRESS?.trim(),
 });

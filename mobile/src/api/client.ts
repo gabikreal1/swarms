@@ -24,14 +24,14 @@ export const api = {
       await mockDelay();
       return MOCK_ANALYSIS;
     }
-    return request('/jobs/analyze', {
+    return request('/v1/jobs/analyze', {
       method: 'POST',
       body: JSON.stringify({ query, sessionId, walletAddress }),
     });
   },
 
   suggestCriteria: (slots: any) =>
-    request('/jobs/suggest-criteria', {
+    request('/v1/jobs/suggest-criteria', {
       method: 'POST',
       body: JSON.stringify({ slots }),
     }),
@@ -43,14 +43,14 @@ export const api = {
         unsignedTx: { to: '0x0000000000000000000000000000000000000000', data: '0x', value: '0' },
       };
     }
-    return request('/jobs/finalize', {
+    return request('/v1/jobs/finalize', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   },
 
   getDraft: (sessionId: string) =>
-    request(`/jobs/draft/${sessionId}`),
+    request(`/v1/jobs/draft/${sessionId}`),
 
   // Taxonomy
   getTaxonomyTree: (params?: { category?: string; includeStats?: boolean }) => {

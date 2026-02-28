@@ -199,14 +199,23 @@ export class QdrantService {
   private async ensureCollection(name: string, dimension: number): Promise<void> {
     const collections = await this.client.getCollections();
     const exists = collections.collections.some((c) => c.name === name);
-    if (!exists) {
-      await this.client.createCollection(name, {
-        vectors: {
-          size: dimension,
-          distance: 'Cosine',
-        },
-      });
+    if (exists) {
+      // Check dimension matches
+      const info = await this.client.getCollection(name);
+      const currentSize = (info.config?.params?.vectors as any)?.size;
+      if (currentSize && currentSize !== dimension) {
+        console.log(`[Qdrant] Recreating ${name}: dimension ${currentSize} → ${dimension}`);
+        await this.client.deleteCollection(name);
+      } else {
+        return;
+      }
     }
+    await this.client.createCollection(name, {
+      vectors: {
+        size: dimension,
+        distance: 'Cosine',
+      },
+    });
   }
 
   private async createPayloadIndexes(

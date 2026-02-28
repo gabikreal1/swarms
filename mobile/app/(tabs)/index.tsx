@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { createPublicClient, http, formatUnits } from 'viem';
 import { useTheme } from '../../src/theme/useTheme';
 import { api } from '../../src/api/client';
@@ -44,7 +43,6 @@ export default function HomeTab() {
   const router = useRouter();
   const [wallet, setWallet] = useState<WalletState | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
-  const [minting, setMinting] = useState(false);
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -74,59 +72,6 @@ export default function HomeTab() {
     }
   }, [wallet]);
 
-  const copyAddress = async () => {
-    if (!wallet?.address) return;
-    await Clipboard.setStringAsync(wallet.address);
-    Alert.alert('Copied', 'Wallet address copied to clipboard');
-  };
-
-  const mintMockUSDC = async () => {
-    if (!wallet?.address) return;
-    setMinting(true);
-    try {
-      const res = await fetch(`${arcTestnet.rpcUrls.default.http[0]}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_sendTransaction',
-          params: [{
-            from: '0x0000000000000000000000000000000000000000',
-            to: wallet.address,
-            value: '0x' + (100_000_000).toString(16), // 100 USDC (6 decimals)
-          }],
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
-      Alert.alert('Minted!', '100 mock USDC sent to your wallet');
-      await fetchBalance();
-    } catch {
-      // Testnet faucet fallback — many testnets don't allow arbitrary minting via RPC.
-      // Try a direct faucet endpoint if available.
-      try {
-        const faucetRes = await fetch(
-          `https://faucet.testnet.arc.network/api/faucet`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ address: wallet.address }),
-          },
-        );
-        if (faucetRes.ok) {
-          Alert.alert('Minted!', 'Testnet USDC requested from faucet');
-          await fetchBalance();
-        } else {
-          Alert.alert('Faucet', 'Testnet faucet unavailable. Try again later.');
-        }
-      } catch {
-        Alert.alert('Faucet', 'Could not reach testnet faucet. Try again later.');
-      }
-    } finally {
-      setMinting(false);
-    }
-  };
 
   useEffect(() => {
     (async () => {
@@ -173,7 +118,7 @@ export default function HomeTab() {
         />
       }
     >
-      {/* Wallet Status */}
+      {/* Wallet */}
       <Section header="Wallet">
         <SectionRow
           label={
@@ -181,6 +126,7 @@ export default function HomeTab() {
               ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
               : 'Not connected'
           }
+          value={wallet?.isConnected && balance !== null ? `${balance} USDC` : undefined}
           icon={
             <View
               style={[
@@ -193,7 +139,7 @@ export default function HomeTab() {
               ]}
             />
           }
-          accessory="disclosure"
+          isLast
           onPress={async () => {
             if (!wallet?.isConnected) {
               try {
@@ -202,57 +148,10 @@ export default function HomeTab() {
               } catch (e: any) {
                 Alert.alert('Wallet Error', e?.message || 'Failed to connect wallet');
               }
-            } else {
-              await copyAddress();
             }
           }}
         />
-        {wallet?.isConnected && (
-          <>
-            <SectionRow
-              label="Balance"
-              value={balance !== null ? `${balance} USDC` : 'Loading...'}
-              icon={
-                <Ionicons name="cash-outline" size={22} color={colors.systemGreen} />
-              }
-            />
-            <SectionRow
-              label="Copy Address"
-              icon={
-                <Ionicons name="copy-outline" size={22} color={colors.tint} />
-              }
-              accessory="disclosure"
-              onPress={copyAddress}
-            />
-            <SectionRow
-              label="Mint 100 Mock USDC"
-              icon={
-                <Ionicons name="add-circle-outline" size={22} color={colors.systemOrange} />
-              }
-              accessory="disclosure"
-              isLast
-              onPress={mintMockUSDC}
-            />
-          </>
-        )}
-        {!wallet?.isConnected && (
-          <SectionRow
-            label="Tap to connect"
-            icon={
-              <Ionicons name="log-in-outline" size={22} color={colors.tint} />
-            }
-            isLast
-          />
-        )}
       </Section>
-      {minting && (
-        <View style={styles.mintingBanner}>
-          <ActivityIndicator size="small" color={colors.systemOrange} />
-          <Text style={[typography.subheadline, { color: colors.secondaryLabel, marginLeft: 8 }]}>
-            Minting USDC...
-          </Text>
-        </View>
-      )}
 
       {/* Quick Actions */}
       <View style={styles.actions}>
@@ -343,12 +242,6 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     flex: 1,
-  },
-  mintingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
   },
   empty: {
     alignItems: 'center',

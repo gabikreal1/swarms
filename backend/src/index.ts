@@ -11,6 +11,7 @@ import taxonomyRouter from './api/taxonomy';
 import { errorHandler } from './api/middleware';
 import { nanopaymentGate, PRICING } from './api/nanopayments';
 import { EventListener } from './indexer/event-listener';
+import { QdrantService } from './vector/qdrant';
 
 const app = express();
 
@@ -64,6 +65,16 @@ async function start() {
   if (process.env.DATABASE_URL) {
     await runMigrations();
   }
+
+  // Initialize Qdrant collections
+  try {
+    const qdrant = new QdrantService();
+    await qdrant.initCollections();
+    console.log('[Qdrant] Collections initialized');
+  } catch (err) {
+    console.warn('[Qdrant] Failed to initialize collections:', (err as Error).message);
+  }
+
   app.listen(config.port, () => {
     console.log(`SWARMS backend listening on port ${config.port}`);
 

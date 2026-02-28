@@ -2,13 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './config';
+import { runMigrations } from './db/migrate';
 import jobRoutes from './api/routes';
 import marketRouter from './api/market';
 import feedRouter from './api/feed';
 import streamRouter from './api/stream';
 import taxonomyRouter from './api/taxonomy';
 import { errorHandler } from './api/middleware';
-import { x402Gate, PRICING } from './api/x402';
+import { nanopaymentGate, PRICING } from './api/nanopayments';
 
 const app = express();
 
@@ -21,12 +22,12 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ── Job pipeline routes (no x402 gating) ──────────────────────────────
+// ── Job pipeline routes (no payment gating) ─────────────────────────
 app.use(jobRoutes);
 
 // ── Feed routes ───────────────────────────────────────────────────────
 // Premium: /v1/feed/jobs/recommended (must be mounted before the free feed router)
-app.use('/v1/feed/jobs/recommended', x402Gate(PRICING.premium));
+app.use('/v1/feed/jobs/recommended', nanopaymentGate(PRICING.premium));
 // Free: /v1/feed/jobs, /v1/feed/agents
 app.use('/v1/feed', feedRouter);
 
@@ -35,31 +36,41 @@ app.use('/v1/stream', streamRouter);
 
 // ── Taxonomy routes ──────────────────────────────────────────────────
 // Standard: /v1/taxonomy/match
-app.use('/v1/taxonomy/match', x402Gate(PRICING.standard));
+app.use('/v1/taxonomy/match', nanopaymentGate(PRICING.standard));
 // Free: /v1/taxonomy/tree, /v1/taxonomy/tags, /v1/taxonomy/suggest
 app.use('/v1/taxonomy', taxonomyRouter);
 
 // ── Market / analytics / stats routes ────────────────────────────────
 // Premium: /v1/analytics/clusters/:tag/breakdown (must come before standard clusters)
-app.use('/v1/analytics/clusters/:tag/breakdown', x402Gate(PRICING.premium));
+app.use('/v1/analytics/clusters/:tag/breakdown', nanopaymentGate(PRICING.premium));
 // Standard: /v1/analytics/clusters
-app.use('/v1/analytics/clusters', x402Gate(PRICING.standard));
+app.use('/v1/analytics/clusters', nanopaymentGate(PRICING.standard));
 // Standard: /v1/market/trends
-app.use('/v1/market/trends', x402Gate(PRICING.standard));
+app.use('/v1/market/trends', nanopaymentGate(PRICING.standard));
 // Standard: /v1/market/supply-demand
-app.use('/v1/market/supply-demand', x402Gate(PRICING.standard));
+app.use('/v1/market/supply-demand', nanopaymentGate(PRICING.standard));
 // Premium: /v1/market/prices
-app.use('/v1/market/prices', x402Gate(PRICING.premium));
+app.use('/v1/market/prices', nanopaymentGate(PRICING.premium));
 // Premium: /v1/stats/agent/:address
-app.use('/v1/stats/agent/:address', x402Gate(PRICING.premium));
+app.use('/v1/stats/agent/:address', nanopaymentGate(PRICING.premium));
 // Free: /v1/stats/overview
 app.use('/v1', marketRouter);
 
 // Global error handler (must be last)
 app.use(errorHandler);
 
-app.listen(config.port, () => {
-  console.log(`SWARMS backend listening on port ${config.port}`);
+async function start() {
+  if (process.env.DATABASE_URL) {
+    await runMigrations();
+  }
+  app.listen(config.port, () => {
+    console.log(`SWARMS backend listening on port ${config.port}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });
 
 export default app;

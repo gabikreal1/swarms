@@ -7,6 +7,7 @@ import {
   StyleSheet,
   FlatList,
 } from 'react-native';
+import { useTheme } from '../theme/useTheme';
 
 export interface SuccessCriterion {
   id: string;
@@ -28,6 +29,7 @@ export default function CriteriaList({
   onEdit,
   accepted,
 }: CriteriaListProps) {
+  const { colors } = useTheme();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
 
@@ -37,10 +39,10 @@ export default function CriteriaList({
     user_defined: 'Custom',
   };
 
-  const sourceColor: Record<string, string> = {
-    similar_job: '#818cf8',
-    llm_suggested: '#4CC9F0',
-    user_defined: '#22c55e',
+  const sourceColorKey: Record<string, keyof typeof colors> = {
+    similar_job: 'systemIndigo',
+    llm_suggested: 'tint',
+    user_defined: 'systemGreen',
   };
 
   const startEdit = (item: SuccessCriterion) => {
@@ -56,15 +58,29 @@ export default function CriteriaList({
   const renderItem = ({ item }: { item: SuccessCriterion }) => {
     const isAccepted = accepted[item.id] ?? true;
     const isEditing = editingId === item.id;
+    const srcColor = colors[sourceColorKey[item.source]];
 
     return (
-      <View style={[styles.item, !isAccepted && styles.itemRejected]}>
+      <View
+        style={[
+          styles.item,
+          {
+            backgroundColor: colors.secondarySystemGroupedBackground,
+            borderColor: colors.separator,
+          },
+          !isAccepted && styles.itemRejected,
+        ]}
+      >
         <TouchableOpacity
           style={styles.checkbox}
           onPress={() => onToggle(item.id, !isAccepted)}
         >
           <View
-            style={[styles.checkboxInner, isAccepted && styles.checkboxChecked]}
+            style={[
+              styles.checkboxInner,
+              { borderColor: colors.tertiaryLabel },
+              isAccepted && { backgroundColor: colors.tint, borderColor: colors.tint },
+            ]}
           >
             {isAccepted && <Text style={styles.checkmark}>✓</Text>}
           </View>
@@ -74,39 +90,51 @@ export default function CriteriaList({
           {isEditing ? (
             <View style={styles.editRow}>
               <TextInput
-                style={styles.editInput}
+                style={[
+                  styles.editInput,
+                  {
+                    color: colors.label,
+                    borderColor: colors.tint,
+                  },
+                ]}
                 value={editText}
                 onChangeText={setEditText}
                 autoFocus
                 multiline
               />
               <TouchableOpacity
-                style={styles.saveBtn}
+                style={[styles.saveBtn, { backgroundColor: colors.tint }]}
                 onPress={() => saveEdit(item.id)}
               >
                 <Text style={styles.saveBtnText}>Save</Text>
               </TouchableOpacity>
             </View>
           ) : (
-            <Text style={[styles.description, !isAccepted && styles.textMuted]}>
+            <Text
+              style={[
+                styles.description,
+                { color: colors.label },
+                !isAccepted && { color: colors.tertiaryLabel, textDecorationLine: 'line-through' as const },
+              ]}
+            >
               {item.description}
             </Text>
           )}
 
           <View style={styles.badges}>
             {item.measurable && (
-              <View style={styles.measurableBadge}>
-                <Text style={styles.measurableText}>measurable</Text>
+              <View style={[styles.measurableBadge, { backgroundColor: colors.systemGreen + '22' }]}>
+                <Text style={[styles.measurableText, { color: colors.systemGreen }]}>measurable</Text>
               </View>
             )}
             <View
               style={[
                 styles.sourceBadge,
-                { borderColor: sourceColor[item.source] },
+                { borderColor: srcColor },
               ]}
             >
               <Text
-                style={[styles.sourceText, { color: sourceColor[item.source] }]}
+                style={[styles.sourceText, { color: srcColor }]}
               >
                 {sourceLabel[item.source]}
               </Text>
@@ -119,7 +147,7 @@ export default function CriteriaList({
             style={styles.editBtn}
             onPress={() => startEdit(item)}
           >
-            <Text style={styles.editIcon}>&#9998;</Text>
+            <Text style={[styles.editIcon, { color: colors.secondaryLabel }]}>&#9998;</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -144,11 +172,9 @@ const styles = StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#1a1a2e',
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#2a2a4a',
   },
   itemRejected: {
     opacity: 0.5,
@@ -162,16 +188,11 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 4,
     borderWidth: 2,
-    borderColor: '#4a4a6a',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxChecked: {
-    backgroundColor: '#4CC9F0',
-    borderColor: '#4CC9F0',
-  },
   checkmark: {
-    color: '#0f0f23',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -179,13 +200,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   description: {
-    color: '#e0e0e0',
     fontSize: 14,
     lineHeight: 20,
-  },
-  textMuted: {
-    color: '#6a6a8a',
-    textDecorationLine: 'line-through',
   },
   badges: {
     flexDirection: 'row',
@@ -193,13 +209,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   measurableBadge: {
-    backgroundColor: '#22c55e22',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   measurableText: {
-    color: '#22c55e',
     fontSize: 11,
     fontWeight: '600',
   },
@@ -218,7 +232,6 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   editIcon: {
-    color: '#a0a0b8',
     fontSize: 16,
   },
   editRow: {
@@ -228,22 +241,18 @@ const styles = StyleSheet.create({
   },
   editInput: {
     flex: 1,
-    color: '#e0e0e0',
-    backgroundColor: '#0f0f23',
     borderRadius: 6,
     padding: 8,
     fontSize: 14,
     borderWidth: 1,
-    borderColor: '#4CC9F0',
   },
   saveBtn: {
-    backgroundColor: '#4CC9F0',
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   saveBtnText: {
-    color: '#0f0f23',
+    color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
   },

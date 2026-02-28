@@ -1,3 +1,11 @@
+import {
+  USE_MOCKS,
+  mockDelay,
+  MOCK_JOBS,
+  MOCK_ANALYSIS,
+  MOCK_TAG_SUGGESTIONS,
+} from '../config/mock';
+
 const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -11,11 +19,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 // Job pipeline
 export const api = {
-  analyzeJob: (query: string, sessionId?: string, walletAddress?: string) =>
-    request('/jobs/analyze', {
+  analyzeJob: async (query: string, sessionId?: string, walletAddress?: string) => {
+    if (USE_MOCKS) {
+      await mockDelay();
+      return MOCK_ANALYSIS;
+    }
+    return request('/jobs/analyze', {
       method: 'POST',
       body: JSON.stringify({ query, sessionId, walletAddress }),
-    }),
+    });
+  },
 
   suggestCriteria: (slots: any) =>
     request('/jobs/suggest-criteria', {
@@ -23,11 +36,18 @@ export const api = {
       body: JSON.stringify({ slots }),
     }),
 
-  finalizeJob: (data: any) =>
-    request('/jobs/finalize', {
+  finalizeJob: async (data: any) => {
+    if (USE_MOCKS) {
+      await mockDelay();
+      return {
+        unsignedTx: { to: '0x0000000000000000000000000000000000000000', data: '0x', value: '0' },
+      };
+    }
+    return request('/jobs/finalize', {
       method: 'POST',
       body: JSON.stringify(data),
-    }),
+    });
+  },
 
   getDraft: (sessionId: string) =>
     request(`/jobs/draft/${sessionId}`),
@@ -38,13 +58,32 @@ export const api = {
     return request(`/v1/taxonomy/tree${qs ? '?' + qs : ''}`);
   },
 
-  suggestTags: (q: string) =>
-    request(`/v1/taxonomy/suggest?q=${encodeURIComponent(q)}`),
+  suggestTags: async (q: string) => {
+    if (USE_MOCKS) {
+      await mockDelay();
+      return MOCK_TAG_SUGGESTIONS.filter(
+        (t) => t.tag.includes(q.toLowerCase()) || t.categoryPath.toLowerCase().includes(q.toLowerCase()),
+      );
+    }
+    return request(`/v1/taxonomy/suggest?q=${encodeURIComponent(q)}`);
+  },
 
   // Feed
-  getJobFeed: (params?: Record<string, string>) => {
+  getJobFeed: async (params?: Record<string, string>) => {
+    if (USE_MOCKS) {
+      await mockDelay();
+      return { jobs: MOCK_JOBS };
+    }
     const qs = new URLSearchParams(params).toString();
     return request(`/v1/feed/jobs${qs ? '?' + qs : ''}`);
+  },
+
+  getJob: async (id: string | number) => {
+    if (USE_MOCKS) {
+      await mockDelay();
+      return MOCK_JOBS.find((j) => String(j.id) === String(id)) || null;
+    }
+    return request(`/v1/feed/jobs/${id}`);
   },
 
   getRecommendedJobs: (agentAddress: string, strategy?: string) => {

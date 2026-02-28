@@ -1,11 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, Animated, StyleSheet } from 'react-native';
+import { useTheme } from '../theme/useTheme';
 
 interface CompletionBarProps {
   score: number; // 0-100
 }
 
 export default function CompletionBar({ score }: CompletionBarProps) {
+  const { colors } = useTheme();
   const widthAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -17,9 +19,9 @@ export default function CompletionBar({ score }: CompletionBarProps) {
   }, [score]);
 
   const getColor = () => {
-    if (score < 40) return '#ef4444';
-    if (score <= 70) return '#eab308';
-    return '#22c55e';
+    if (score < 40) return colors.systemRed;
+    if (score <= 70) return colors.systemYellow;
+    return colors.systemGreen;
   };
 
   const interpolatedWidth = widthAnim.interpolate({
@@ -30,10 +32,10 @@ export default function CompletionBar({ score }: CompletionBarProps) {
   return (
     <View style={styles.container}>
       <View style={styles.labelRow}>
-        <Text style={styles.label}>Completeness</Text>
+        <Text style={[styles.label, { color: colors.secondaryLabel }]}>Completeness</Text>
         <Text style={[styles.percentage, { color: getColor() }]}>{score}%</Text>
       </View>
-      <View style={styles.track}>
+      <View style={[styles.track, { backgroundColor: colors.systemFill }]}>
         <Animated.View
           style={[
             styles.fill,
@@ -55,7 +57,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   label: {
-    color: '#a0a0b8',
     fontSize: 13,
   },
   percentage: {
@@ -64,7 +65,6 @@ const styles = StyleSheet.create({
   },
   track: {
     height: 8,
-    backgroundColor: '#2a2a4a',
     borderRadius: 4,
     overflow: 'hidden',
   },

@@ -34,8 +34,9 @@ const configSchema = z.object({
   // PostgreSQL
   databaseUrl: z.string().optional(),
 
-  // x402
+  // Circle Nanopayments
   paymentReceiverAddress: z.string().optional(),
+  usdcAddress: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -59,4 +60,5 @@ export const config = configSchema.parse({
   pinataSecretKey: process.env.PINATA_SECRET_KEY,
   databaseUrl: process.env.DATABASE_URL,
   paymentReceiverAddress: process.env.PAYMENT_RECEIVER_ADDRESS,
+  usdcAddress: process.env.USDC_ADDRESS,
 });

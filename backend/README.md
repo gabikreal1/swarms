@@ -1,6 +1,6 @@
 # Backend
 
-Express/TypeScript API server for the SWARMS marketplace. Provides LLM-powered job analysis, vector similarity search, market intelligence, real-time streaming, and x402 micropayment-gated premium endpoints.
+Express/TypeScript API server for the SWARMS marketplace. Provides LLM-powered job analysis, vector similarity search, market intelligence, real-time streaming, and Circle nanopayment-gated premium endpoints.
 
 ## Setup
 
@@ -52,7 +52,7 @@ Health check: `GET /health`
 | `/v1/feed/jobs` | GET | Job feed with filtering (tags, category, budget range, status, deadline). Cursor-based pagination. |
 | `/v1/feed/agents` | GET | Agent directory with capability/reputation filtering |
 
-### Feed (premium — $0.01/call via x402)
+### Feed (premium — $0.01/call via Circle nanopayments)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -69,7 +69,7 @@ Health check: `GET /health`
 | `/v1/taxonomy/tag/:id` | GET | Single tag details with related tags |
 | `/v1/taxonomy/resolve` | POST | Resolve aliases to canonical tag IDs |
 
-### Taxonomy (standard — $0.001/call via x402)
+### Taxonomy (standard — $0.001/call via Circle nanopayments)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -98,16 +98,20 @@ Health check: `GET /health`
 
 SSE event types: `job.posted`, `job.bid_placed`, `job.bid_accepted`, `job.delivered`, `job.completed`, `job.disputed`, `market.price_shift`, `market.demand_spike`
 
-## x402 Micropayments
+## Circle Nanopayments
 
-Premium and standard endpoints are gated by [x402](https://www.x402.org/) — agents pay USDC micropayments per API call. The payment flow is transparent:
+Premium and standard endpoints are gated by Circle nanopayments — agents pay gas-free USDC micropayments per API call. The payment flow is transparent:
 
 1. Agent calls a gated endpoint
-2. Server responds with `402 Payment Required` + payment details
-3. Agent's x402-enabled fetch automatically signs a USDC payment
-4. Server verifies payment and returns data
+2. Server responds with `402 Payment Required` + payment instructions
+3. Agent signs a USDC payment authorization with their Circle wallet
+4. Server verifies the payment proof on-chain and returns data
 
-See `src/api/x402-client.ts` for an example agent-side integration using `@x402/fetch`.
+Two verification methods are supported:
+- **Transaction proof**: Agent sends USDC on-chain, includes tx hash in `X-Circle-Payment` header
+- **Signed message**: Agent signs a `SWARMS-PAY` message, server verifies signature + USDC balance
+
+See `src/api/nanopayments-client.ts` for an example agent-side integration.
 
 ## Architecture
 
@@ -119,7 +123,7 @@ src/
 │   ├── feed.ts       # Job & agent feeds (/v1/feed/*)
 │   ├── stream.ts     # SSE + webhooks (/v1/stream/*)
 │   ├── taxonomy.ts   # Tag taxonomy (/v1/taxonomy/*)
-│   ├── x402.ts       # x402 payment middleware
+│   ├── nanopayments.ts  # Circle nanopayment middleware
 │   └── middleware.ts  # Validation + error handling
 ├── llm/              # Multi-provider LLM abstraction
 │   ├── anthropic.ts   # Claude (claude-sonnet-4-20250514)
@@ -188,4 +192,5 @@ See `.env.example` for all options:
 | `RPC_URL` | Yes | ARC testnet RPC |
 | `ORDERBOOK_ADDRESS` | Yes | Deployed OrderBook contract |
 | `PINATA_API_KEY` | For finalize | IPFS pinning |
-| `PAYMENT_RECEIVER_ADDRESS` | For x402 | USDC payment recipient |
+| `PAYMENT_RECEIVER_ADDRESS` | For nanopayments | USDC payment recipient |
+| `USDC_ADDRESS` | For nanopayments | USDC contract address on target chain |

@@ -8,6 +8,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { api } from '../api/client';
+import { useTheme } from '../theme/useTheme';
 
 interface TagSuggestion {
   tag: string;
@@ -20,6 +21,7 @@ interface TagSelectorProps {
 }
 
 export default function TagSelector({ selectedTags, onTagsChange }: TagSelectorProps) {
+  const { colors } = useTheme();
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<TagSuggestion[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -69,27 +71,42 @@ export default function TagSelector({ selectedTags, onTagsChange }: TagSelectorP
   return (
     <View style={styles.container}>
       <TextInput
-        style={styles.input}
+        style={[
+          styles.input,
+          {
+            backgroundColor: colors.secondarySystemGroupedBackground,
+            color: colors.label,
+            borderColor: colors.separator,
+          },
+        ]}
         value={query}
         onChangeText={handleChangeText}
         placeholder="Search tags..."
-        placeholderTextColor="#6a6a8a"
+        placeholderTextColor={colors.tertiaryLabel}
         onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
       />
 
       {showDropdown && (
-        <View style={styles.dropdown}>
+        <View
+          style={[
+            styles.dropdown,
+            {
+              backgroundColor: colors.secondarySystemGroupedBackground,
+              borderColor: colors.separator,
+            },
+          ]}
+        >
           <FlatList
             data={suggestions}
             keyExtractor={(item) => item.tag}
             keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => (
               <TouchableOpacity
-                style={styles.suggestionItem}
+                style={[styles.suggestionItem, { borderBottomColor: colors.separator }]}
                 onPress={() => addTag(item.tag)}
               >
-                <Text style={styles.suggestionTag}>{item.tag}</Text>
-                <Text style={styles.suggestionPath}>{item.categoryPath}</Text>
+                <Text style={[styles.suggestionTag, { color: colors.label }]}>{item.tag}</Text>
+                <Text style={[styles.suggestionPath, { color: colors.tertiaryLabel }]}>{item.categoryPath}</Text>
               </TouchableOpacity>
             )}
           />
@@ -99,10 +116,10 @@ export default function TagSelector({ selectedTags, onTagsChange }: TagSelectorP
       {selectedTags.length > 0 && (
         <View style={styles.tagsRow}>
           {selectedTags.map((tag) => (
-            <View key={tag} style={styles.pill}>
-              <Text style={styles.pillText}>{tag}</Text>
+            <View key={tag} style={[styles.pill, { backgroundColor: colors.tint + '26' }]}>
+              <Text style={[styles.pillText, { color: colors.tint }]}>{tag}</Text>
               <TouchableOpacity onPress={() => removeTag(tag)}>
-                <Text style={styles.pillRemove}>x</Text>
+                <Text style={[styles.pillRemove, { color: colors.systemRed }]}>x</Text>
               </TouchableOpacity>
             </View>
           ))}
@@ -117,18 +134,13 @@ const styles = StyleSheet.create({
     marginVertical: 8,
   },
   input: {
-    backgroundColor: '#1a1a2e',
-    color: '#e0e0e0',
     borderRadius: 8,
     padding: 12,
     fontSize: 15,
     borderWidth: 1,
-    borderColor: '#2a2a4a',
   },
   dropdown: {
-    backgroundColor: '#1a1a2e',
     borderWidth: 1,
-    borderColor: '#2a2a4a',
     borderTopWidth: 0,
     borderBottomLeftRadius: 8,
     borderBottomRightRadius: 8,
@@ -138,15 +150,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#2a2a4a',
   },
   suggestionTag: {
-    color: '#e0e0e0',
     fontSize: 14,
     fontWeight: '600',
   },
   suggestionPath: {
-    color: '#6a6a8a',
     fontSize: 12,
     marginTop: 2,
   },
@@ -159,19 +168,16 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#4CC9F022',
     borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 5,
     gap: 6,
   },
   pillText: {
-    color: '#4CC9F0',
     fontSize: 13,
     fontWeight: '600',
   },
   pillRemove: {
-    color: '#4CC9F0',
     fontSize: 15,
     fontWeight: '700',
   },

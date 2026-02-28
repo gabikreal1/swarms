@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableHighlight, StyleSheet } from 'react-native';
+import { useTheme } from '../theme/useTheme';
 
 interface JobCardProps {
   job: {
@@ -15,72 +16,85 @@ interface JobCardProps {
   onPress: () => void;
 }
 
-const statusColors: Record<string, string> = {
-  OPEN: '#4CC9F0',
-  IN_PROGRESS: '#eab308',
-  DELIVERED: '#818cf8',
-  VALIDATING: '#f97316',
-  COMPLETED: '#22c55e',
-  DISPUTED: '#ef4444',
+const STATUS_COLOR_KEY: Record<string, string> = {
+  OPEN: 'systemBlue',
+  IN_PROGRESS: 'systemYellow',
+  DELIVERED: 'systemIndigo',
+  VALIDATING: 'systemOrange',
+  COMPLETED: 'systemGreen',
+  DISPUTED: 'systemRed',
 };
 
 export default function JobCard({ job, onPress }: JobCardProps) {
-  const badgeColor = statusColors[job.status] || '#6a6a8a';
+  const { colors, spacing } = useTheme();
+
+  const colorKey = STATUS_COLOR_KEY[job.status] as keyof typeof colors | undefined;
+  const badgeColor = colorKey ? colors[colorKey] : colors.secondaryLabel;
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
-      <View style={styles.header}>
-        <Text style={styles.title} numberOfLines={2}>
-          {job.title}
-        </Text>
-        <View style={[styles.statusBadge, { backgroundColor: badgeColor + '22', borderColor: badgeColor }]}>
-          <Text style={[styles.statusText, { color: badgeColor }]}>
-            {job.status.replace('_', ' ')}
+    <TouchableHighlight
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.secondarySystemGroupedBackground,
+          borderColor: colors.separator,
+          borderRadius: spacing.cardRadius,
+        },
+      ]}
+      onPress={onPress}
+      underlayColor={colors.systemFill}
+    >
+      <View>
+        <View style={styles.header}>
+          <Text style={[styles.title, { color: colors.label }]} numberOfLines={2}>
+            {job.title}
           </Text>
+          <View style={[styles.statusBadge, { backgroundColor: badgeColor + '22', borderColor: badgeColor }]}>
+            <Text style={[styles.statusText, { color: badgeColor }]}>
+              {job.status.replace('_', ' ')}
+            </Text>
+          </View>
         </View>
-      </View>
 
-      <View style={styles.details}>
-        <View style={styles.detailItem}>
-          <Text style={styles.detailLabel}>Budget</Text>
-          <Text style={styles.detailValue}>{job.budget} USDC</Text>
+        <View style={styles.details}>
+          <View style={styles.detailItem}>
+            <Text style={[styles.detailLabel, { color: colors.tertiaryLabel }]}>Budget</Text>
+            <Text style={[styles.detailValue, { color: colors.label }]}>{job.budget} USDC</Text>
+          </View>
+          <View style={styles.detailItem}>
+            <Text style={[styles.detailLabel, { color: colors.tertiaryLabel }]}>Deadline</Text>
+            <Text style={[styles.detailValue, { color: colors.label }]}>{job.deadline}</Text>
+          </View>
+          <View style={styles.detailItem}>
+            <Text style={[styles.detailLabel, { color: colors.tertiaryLabel }]}>Bids</Text>
+            <Text style={[styles.detailValue, { color: colors.label }]}>{job.bidCount}</Text>
+          </View>
         </View>
-        <View style={styles.detailItem}>
-          <Text style={styles.detailLabel}>Deadline</Text>
-          <Text style={styles.detailValue}>{job.deadline}</Text>
-        </View>
-        <View style={styles.detailItem}>
-          <Text style={styles.detailLabel}>Bids</Text>
-          <Text style={styles.detailValue}>{job.bidCount}</Text>
-        </View>
-      </View>
 
-      {(job.category || (job.tags && job.tags.length > 0)) && (
-        <View style={styles.tagsRow}>
-          {job.category && (
-            <View style={styles.categoryPill}>
-              <Text style={styles.categoryText}>{job.category}</Text>
-            </View>
-          )}
-          {job.tags?.map((tag) => (
-            <View key={tag} style={styles.tagPill}>
-              <Text style={styles.tagText}>{tag}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </TouchableOpacity>
+        {(job.category || (job.tags && job.tags.length > 0)) && (
+          <View style={styles.tagsRow}>
+            {job.category && (
+              <View style={[styles.categoryPill, { backgroundColor: colors.tint + '26' }]}>
+                <Text style={[styles.categoryText, { color: colors.tint }]}>{job.category}</Text>
+              </View>
+            )}
+            {job.tags?.map((tag) => (
+              <View key={tag} style={[styles.tagPill, { backgroundColor: colors.systemFill }]}>
+                <Text style={[styles.tagText, { color: colors.secondaryLabel }]}>{tag}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    </TouchableHighlight>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#2a2a4a',
   },
   header: {
     flexDirection: 'row',
@@ -89,7 +103,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   title: {
-    color: '#e0e0e0',
     fontSize: 16,
     fontWeight: '600',
     flex: 1,
@@ -114,12 +127,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   detailLabel: {
-    color: '#6a6a8a',
     fontSize: 11,
     marginBottom: 2,
   },
   detailValue: {
-    color: '#e0e0e0',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -130,24 +141,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   categoryPill: {
-    backgroundColor: '#4CC9F022',
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   categoryText: {
-    color: '#4CC9F0',
     fontSize: 12,
     fontWeight: '600',
   },
   tagPill: {
-    backgroundColor: '#2a2a4a',
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   tagText: {
-    color: '#a0a0b8',
     fontSize: 12,
   },
 });

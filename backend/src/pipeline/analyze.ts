@@ -11,9 +11,22 @@ import {
 } from '../types/job-slots';
 
 export class AnalyzePipeline {
-  private llm = createLLMProvider();
-  private embedder = createEmbeddingProvider();
-  private qdrant = new QdrantService();
+  private _llm: ReturnType<typeof createLLMProvider> | null = null;
+  private _embedder: ReturnType<typeof createEmbeddingProvider> | null = null;
+  private _qdrant: QdrantService | null = null;
+
+  private get llm() {
+    if (!this._llm) this._llm = createLLMProvider();
+    return this._llm;
+  }
+  private get embedder() {
+    if (!this._embedder) this._embedder = createEmbeddingProvider();
+    return this._embedder;
+  }
+  private get qdrant() {
+    if (!this._qdrant) this._qdrant = new QdrantService();
+    return this._qdrant;
+  }
 
   async analyze(request: AnalyzeRequest): Promise<AnalyzeResponse> {
     const sessionId = request.sessionId || uuid();

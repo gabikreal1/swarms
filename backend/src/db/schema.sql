@@ -217,6 +217,50 @@ CREATE INDEX IF NOT EXISTS idx_sd_tag  ON supply_demand (tag);
 CREATE INDEX IF NOT EXISTS idx_sd_snap ON supply_demand (snapshot_at DESC);
 
 -- ============================================================
+-- ============================================================
+-- Events (used by event-hub.ts for materialization)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS events (
+  id              BIGSERIAL PRIMARY KEY,
+  type            VARCHAR(60) NOT NULL,
+  job_id          BIGINT,
+  data            JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_type ON events (type);
+CREATE INDEX IF NOT EXISTS idx_events_job_id ON events (job_id);
+CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_at DESC);
+
+-- ============================================================
+-- Chat sessions (Butler conversational state)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  session_id      UUID PRIMARY KEY,
+  wallet_address  VARCHAR(42) NOT NULL,
+  phase           VARCHAR(30) NOT NULL DEFAULT 'greeting',
+  context         JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_wallet ON chat_sessions (wallet_address);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id              UUID PRIMARY KEY,
+  session_id      UUID NOT NULL REFERENCES chat_sessions(session_id),
+  role            VARCHAR(10) NOT NULL CHECK (role IN ('user', 'butler')),
+  blocks          JSONB NOT NULL,
+  metadata        JSONB,
+  created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages (session_id, created_at);
+
+-- ============================================================
 -- Indexer bookkeeping
 -- ============================================================
 

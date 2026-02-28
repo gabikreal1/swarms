@@ -85,6 +85,7 @@ export interface EventListenerConfig {
   escrowAddress: string;
   jobRegistryAddress: string;
   pollIntervalMs?: number;
+  startBlock?: number;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -163,7 +164,9 @@ export class EventListener {
     currentBlock: number,
   ): Promise<void> {
     const lastBlock = await getLastBlock(name);
-    const fromBlock = Number(lastBlock) + 1;
+    const fromBlock = Number(lastBlock) === 0 && this.config.startBlock
+      ? this.config.startBlock
+      : Number(lastBlock) + 1;
 
     if (fromBlock > currentBlock) return;
 

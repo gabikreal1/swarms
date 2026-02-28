@@ -78,6 +78,7 @@ async function start() {
         escrowAddress,
         jobRegistryAddress,
         pollIntervalMs: 10_000,
+        startBlock: Number(process.env.INDEXER_START_BLOCK ?? 29457200),
       });
       listener.start().catch((err) =>
         console.error('[EventListener] failed to start:', err),

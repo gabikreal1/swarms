@@ -204,6 +204,21 @@ export function useButlerChat(chatId: string | null) {
               console.log('[SSE] connected');
               break;
 
+            case 'message_start':
+              // Server is pushing a new butler message (e.g. delivery notification)
+              setAgentTyping(true);
+              setMessages(prev => [
+                ...prev,
+                {
+                  id: data.messageId || `butler-${Date.now()}`,
+                  role: 'butler' as const,
+                  text: '',
+                  timestamp: Date.now(),
+                  blocks: [],
+                },
+              ]);
+              break;
+
             case 'block_start':
               setAgentTyping(true);
               if (data.blockType === 'text') {

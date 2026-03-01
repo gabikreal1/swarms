@@ -273,6 +273,7 @@ export interface ChatResponse {
 // ── SSE Events ────────────────────────────────────────────
 
 export type ChatSSEEvent =
+  | { type: 'message_start'; messageId: string }
   | { type: 'block_start'; blockId: string; blockType: GenUIBlockType }
   | { type: 'block_delta'; blockId: string; delta: string }
   | { type: 'block_complete'; blockId: string; block: GenUIBlock }

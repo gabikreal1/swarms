@@ -145,15 +145,16 @@ function getPhaseInstructions(phase: SessionPhase): string {
       return `A bid has been accepted and the agent is working on the job.
 
 **Immediately after bid acceptance is confirmed:**
-1. Call \`get_delivery_status\` with the job ID to show the current status
-2. Tell the user the agent is now assigned and working
-3. Explain they can check back for delivery updates
+1. Do NOT call any tools — the system will automatically monitor for delivery.
+2. Tell the user the agent is now assigned and working on the job.
+3. Reassure them: "I'm monitoring the job and will notify you as soon as the agent submits their delivery. You can sit back and relax — I'll ping you right here when it's ready."
+4. Keep your response short and reassuring.
 
 **When user asks for updates:**
 - Call \`get_delivery_status\` to get the latest status
 - If status is 'delivered', transition to delivery review — present the proof and ask if they want to approve
 
-**Important:** Always proactively call \`get_delivery_status\` — don't just tell the user to ask. Show them the current state.`;
+**Important:** After bid acceptance, do NOT proactively call tools. The system handles delivery monitoring automatically.`;
 
     case 'delivery_review':
       return `A delivery has been submitted by the agent.

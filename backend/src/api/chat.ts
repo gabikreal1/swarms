@@ -75,6 +75,109 @@ function sendSSE(sessionId: string, event: ChatSSEEvent): void {
   }
 }
 
+// ── Delivery watcher (polls for agent delivery after bid accepted) ────
+const deliveryWatchers = new Map<string, NodeJS.Timeout>();
+
+function startDeliveryWatcher(sessionId: string, jobId: string): void {
+  if (deliveryWatchers.has(sessionId)) return;
+  log.chat.info(`delivery-watcher started session=${sessionId} job=${jobId}`);
+
+  let attempts = 0;
+  const maxAttempts = 40; // 40 × 15s = 10 minutes
+  const intervalMs = 15_000;
+
+  const timer = setInterval(async () => {
+    attempts++;
+    if (attempts > maxAttempts) {
+      log.chat.info(`delivery-watcher timed out session=${sessionId}`);
+      clearInterval(timer);
+      deliveryWatchers.delete(sessionId);
+      return;
+    }
+
+    // Stop if no SSE clients are connected
+    if (!sseConnections.has(sessionId)) {
+      log.chat.info(`delivery-watcher stopped (no SSE clients) session=${sessionId}`);
+      clearInterval(timer);
+      deliveryWatchers.delete(sessionId);
+      return;
+    }
+
+    try {
+      const result = await executeButlerTool('get_delivery_status', { jobId });
+      const status = String(result.status || '');
+      log.chat.debug(`delivery-watcher poll #${attempts} session=${sessionId} status=${status}`);
+
+      if (status === 'delivered' || status === 'completed') {
+        clearInterval(timer);
+        deliveryWatchers.delete(sessionId);
+        log.chat.info(`delivery-watcher: delivery found! session=${sessionId} status=${status}`);
+        await sendDeliveryNotification(sessionId, jobId, result);
+      }
+    } catch (err) {
+      log.chat.debug(`delivery-watcher poll error:`, (err as Error).message);
+    }
+  }, intervalMs);
+
+  deliveryWatchers.set(sessionId, timer);
+}
+
+function stopDeliveryWatcher(sessionId: string): void {
+  const timer = deliveryWatchers.get(sessionId);
+  if (timer) {
+    clearInterval(timer);
+    deliveryWatchers.delete(sessionId);
+  }
+}
+
+async function sendDeliveryNotification(
+  sessionId: string,
+  jobId: string,
+  deliveryResult: Record<string, unknown>,
+): Promise<void> {
+  const messageId = uuid();
+  const textBlockId = `text-${uuid().slice(0, 8)}`;
+  const text = `The agent has submitted their delivery for your job! Here are the details — review below and approve to release the escrow.`;
+
+  // Signal new message (mobile creates a fresh butler bubble)
+  sendSSE(sessionId, { type: 'message_start', messageId });
+
+  // Stream the text block
+  sendSSE(sessionId, { type: 'block_start', blockId: textBlockId, blockType: 'text' });
+  sendSSE(sessionId, { type: 'block_delta', blockId: textBlockId, delta: text });
+  sendSSE(sessionId, {
+    type: 'block_complete',
+    blockId: textBlockId,
+    block: { id: textBlockId, type: 'text', content: text } as GenUIBlock,
+  });
+
+  // Map delivery result to GenUI blocks (table, links, action buttons)
+  const blocks = mapToolResultToBlocks('get_delivery_status', deliveryResult);
+  for (const block of blocks) {
+    sendSSE(sessionId, { type: 'block_start', blockId: block.id, blockType: block.type as any });
+    sendSSE(sessionId, { type: 'block_complete', blockId: block.id, block });
+  }
+
+  // Done
+  sendSSE(sessionId, { type: 'done', messageId });
+
+  // Persist
+  const allBlocks: GenUIBlock[] = [
+    { id: textBlockId, type: 'text', content: text } as GenUIBlock,
+    ...blocks,
+  ];
+  const butlerMessage: ChatMessage = {
+    id: messageId,
+    role: 'butler',
+    blocks: allBlocks,
+    timestamp: new Date().toISOString(),
+    metadata: { toolCalls: ['get_delivery_status'], sessionPhase: 'delivery_review' },
+  };
+  await insertMessage(sessionId, butlerMessage);
+  await updateSessionPhase(sessionId, 'delivery_review');
+  sendSSE(sessionId, { type: 'phase_change', phase: 'delivery_review' });
+}
+
 // ── Vertical action buttons (appended after LLM greeting) ────
 function buildVerticalActionBlock(): GenUIBlock {
   return {
@@ -442,6 +545,14 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
                 }
                 await updateSessionContext(sessionId, updatedContext);
 
+                // Start delivery watcher after bid acceptance
+                if (isTxConfirmed && (nextPhase === 'execution' || session!.phase === 'execution')) {
+                  const watchJobId = updatedContext.currentJobId || updatedContext.jobId;
+                  if (watchJobId) {
+                    startDeliveryWatcher(sessionId, watchJobId);
+                  }
+                }
+
                 sendSSE(sessionId, {
                   type: 'done',
                   messageId: butlerMessage.id,
@@ -549,6 +660,8 @@ router.get('/:sessionId/stream', (req: Request, res: Response) => {
       clients.delete(res);
       if (clients.size === 0) {
         sseConnections.delete(sessionId);
+        // Stop delivery watcher when all SSE clients disconnect
+        stopDeliveryWatcher(sessionId);
       }
     }
     log.sse.info(`disconnected session=${sessionId}`);

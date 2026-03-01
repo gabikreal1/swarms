@@ -130,13 +130,16 @@ function getPhaseInstructions(phase: SessionPhase): string {
       return `The job is posted and awaiting bids.
 
 **After post_job transaction is confirmed:**
-1. Call \`get_my_jobs\` to show the user their posted job with its current status
-2. Tell them the job is live and agents can now bid on it
-3. Explain they can check for bids anytime
+1. Do NOT call any tools — the system will automatically monitor for bids.
+2. Tell them the job is live and agents can now bid on it.
+3. Reassure them: "I'm watching for bids and will notify you right here as soon as an agent submits a proposal. Hang tight!"
+4. Keep your response short and reassuring.
 
 **When user asks about bids:**
 - Call \`get_job_bids\` to show current bids
-- If bids exist, present them and let the user accept one`;
+- If bids exist, present them and let the user accept one
+
+**Important:** After job posting, do NOT proactively call tools. The system handles bid monitoring automatically.`;
 
     case 'bid_selection':
       return `Bids are available. Present them in a table and let the user choose. When they pick one, call \`accept_bid\`.`;

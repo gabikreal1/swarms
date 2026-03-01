@@ -178,6 +178,107 @@ async function sendDeliveryNotification(
   sendSSE(sessionId, { type: 'phase_change', phase: 'delivery_review' });
 }
 
+// ── Bid watcher (polls for new bids after job posted) ────────────────
+const bidWatchers = new Map<string, NodeJS.Timeout>();
+
+function startBidWatcher(sessionId: string, jobId: string): void {
+  if (bidWatchers.has(sessionId)) return;
+  log.chat.info(`bid-watcher started session=${sessionId} job=${jobId}`);
+
+  let attempts = 0;
+  const maxAttempts = 60; // 60 × 10s = 10 minutes
+  const intervalMs = 10_000;
+
+  const timer = setInterval(async () => {
+    attempts++;
+    if (attempts > maxAttempts) {
+      log.chat.info(`bid-watcher timed out session=${sessionId}`);
+      clearInterval(timer);
+      bidWatchers.delete(sessionId);
+      return;
+    }
+
+    if (!sseConnections.has(sessionId)) {
+      log.chat.info(`bid-watcher stopped (no SSE clients) session=${sessionId}`);
+      clearInterval(timer);
+      bidWatchers.delete(sessionId);
+      return;
+    }
+
+    try {
+      const result = await executeButlerTool('get_job_bids', { jobId });
+      const bids = result.bids as unknown[] | undefined;
+      log.chat.debug(`bid-watcher poll #${attempts} session=${sessionId} bids=${bids?.length || 0}`);
+
+      if (bids && bids.length > 0) {
+        clearInterval(timer);
+        bidWatchers.delete(sessionId);
+        log.chat.info(`bid-watcher: ${bids.length} bid(s) found! session=${sessionId}`);
+        await sendBidNotification(sessionId, jobId, result);
+      }
+    } catch (err) {
+      log.chat.debug(`bid-watcher poll error:`, (err as Error).message);
+    }
+  }, intervalMs);
+
+  bidWatchers.set(sessionId, timer);
+}
+
+function stopBidWatcher(sessionId: string): void {
+  const timer = bidWatchers.get(sessionId);
+  if (timer) {
+    clearInterval(timer);
+    bidWatchers.delete(sessionId);
+  }
+}
+
+async function sendBidNotification(
+  sessionId: string,
+  jobId: string,
+  bidsResult: Record<string, unknown>,
+): Promise<void> {
+  const bids = bidsResult.bids as unknown[];
+  const messageId = uuid();
+  const textBlockId = `text-${uuid().slice(0, 8)}`;
+  const count = bids.length;
+  const text = count === 1
+    ? `An agent has placed a bid on your job! Review the proposal below and accept if it looks good.`
+    : `${count} agents have bid on your job! Review the proposals below and pick the best one.`;
+
+  sendSSE(sessionId, { type: 'message_start', messageId });
+
+  sendSSE(sessionId, { type: 'block_start', blockId: textBlockId, blockType: 'text' });
+  sendSSE(sessionId, { type: 'block_delta', blockId: textBlockId, delta: text });
+  sendSSE(sessionId, {
+    type: 'block_complete',
+    blockId: textBlockId,
+    block: { id: textBlockId, type: 'text', content: text } as GenUIBlock,
+  });
+
+  const blocks = mapToolResultToBlocks('get_job_bids', bidsResult);
+  for (const block of blocks) {
+    sendSSE(sessionId, { type: 'block_start', blockId: block.id, blockType: block.type as any });
+    sendSSE(sessionId, { type: 'block_complete', blockId: block.id, block });
+  }
+
+  sendSSE(sessionId, { type: 'done', messageId });
+
+  const allBlocks: GenUIBlock[] = [
+    { id: textBlockId, type: 'text', content: text } as GenUIBlock,
+    ...blocks,
+  ];
+  const butlerMessage: ChatMessage = {
+    id: messageId,
+    role: 'butler',
+    blocks: allBlocks,
+    timestamp: new Date().toISOString(),
+    metadata: { toolCalls: ['get_job_bids'], sessionPhase: 'bid_selection' },
+  };
+  await insertMessage(sessionId, butlerMessage);
+  await updateSessionPhase(sessionId, 'bid_selection');
+  sendSSE(sessionId, { type: 'phase_change', phase: 'bid_selection' });
+}
+
 // ── Vertical action buttons (appended after LLM greeting) ────
 function buildVerticalActionBlock(): GenUIBlock {
   return {
@@ -545,6 +646,29 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
                 }
                 await updateSessionContext(sessionId, updatedContext);
 
+                // Start bid watcher after job posted
+                if (isTxConfirmed && (nextPhase === 'awaiting_bids' || session!.phase === 'awaiting_bids')) {
+                  let watchJobId = updatedContext.currentJobId || updatedContext.jobId;
+
+                  // post_job doesn't return a jobId (it's minted on-chain after signing),
+                  // so look up the latest job for this wallet from the DB
+                  if (!watchJobId) {
+                    try {
+                      const latestResult = await executeButlerTool('get_my_jobs', { wallet: walletAddress, limit: 1 });
+                      const jobs = latestResult.jobs as Record<string, unknown>[];
+                      if (jobs?.[0]?.id) {
+                        watchJobId = String(jobs[0].id);
+                        updatedContext.currentJobId = watchJobId;
+                        await updateSessionContext(sessionId, updatedContext);
+                      }
+                    } catch {}
+                  }
+
+                  if (watchJobId) {
+                    startBidWatcher(sessionId, watchJobId);
+                  }
+                }
+
                 // Start delivery watcher after bid acceptance
                 if (isTxConfirmed && (nextPhase === 'execution' || session!.phase === 'execution')) {
                   const watchJobId = updatedContext.currentJobId || updatedContext.jobId;
@@ -660,7 +784,8 @@ router.get('/:sessionId/stream', (req: Request, res: Response) => {
       clients.delete(res);
       if (clients.size === 0) {
         sseConnections.delete(sessionId);
-        // Stop delivery watcher when all SSE clients disconnect
+        // Stop watchers when all SSE clients disconnect
+        stopBidWatcher(sessionId);
         stopDeliveryWatcher(sessionId);
       }
     }

@@ -308,8 +308,11 @@ function buildTransactionBlocks(
 // ── get_delivery_status ─────────────────────────────────────
 
 function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[] {
+  const blocks: GenUIBlock[] = [];
+  const status = String(result.status || '-');
+
   const rows = [
-    { field: 'Status', value: String(result.status || '-') },
+    { field: 'Status', value: status },
     { field: 'Proof Hash', value: String(result.proof_hash || '-') },
     { field: 'Delivered At', value: String(result.delivered_at || '-') },
   ];
@@ -324,6 +327,50 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
     rows,
     sortable: false,
   };
+  blocks.push(table);
 
-  return [table];
+  // Add action buttons based on status
+  if (status === 'delivered') {
+    const actionBlock: ActionBlock = {
+      id: blockId('action'),
+      type: 'action',
+      actions: [
+        {
+          id: blockId('btn'),
+          label: 'Approve & Release Escrow',
+          variant: 'primary' as const,
+          toolCall: 'approve_delivery',
+          toolArgs: { jobId: String(result.id || '') },
+          confirmMessage: 'Approve this delivery and release escrowed funds to the agent?',
+        },
+        {
+          id: blockId('btn'),
+          label: 'Check Again',
+          variant: 'outline' as const,
+          toolCall: 'get_delivery_status',
+          toolArgs: { jobId: String(result.id || '') },
+        },
+      ],
+      layout: 'horizontal',
+    };
+    blocks.push(actionBlock);
+  } else if (status === 'in_progress') {
+    const actionBlock: ActionBlock = {
+      id: blockId('action'),
+      type: 'action',
+      actions: [
+        {
+          id: blockId('btn'),
+          label: 'Check Delivery Status',
+          variant: 'primary' as const,
+          toolCall: 'get_delivery_status',
+          toolArgs: { jobId: String(result.id || '') },
+        },
+      ],
+      layout: 'horizontal',
+    };
+    blocks.push(actionBlock);
+  }
+
+  return blocks;
 }

@@ -160,7 +160,7 @@ function describeUserInput(body: ChatRequest): string {
       parts.push(`I selected the "${toolArgs.jobType}" job vertical.`);
     } else if (actionId === 'tx-confirmed') {
       const txHash = (toolArgs?.txHash as string) || '';
-      parts.push(`Transaction confirmed: ${txHash}`);
+      parts.push(`Transaction confirmed (tx: ${txHash}). Please check the current status of the job and show me what happens next.`);
     } else if (actionId === 'confirm-criteria') {
       parts.push('I confirmed the criteria and want to post the job now.');
     } else if (actionId === 'go-back') {
@@ -192,19 +192,33 @@ function describeUserInput(body: ChatRequest): string {
 function inferPhaseFromTools(
   toolsCalled: string[],
   currentPhase: SessionPhase,
+  toolResults?: Map<string, Record<string, unknown>>,
 ): SessionPhase {
   if (toolsCalled.includes('approve_delivery')) return 'completed';
   if (toolsCalled.includes('accept_bid')) return 'execution';
-  if (toolsCalled.includes('post_job')) return 'posting';
+  if (toolsCalled.includes('post_job')) return 'awaiting_bids';
   if (toolsCalled.includes('get_job_criteria')) return 'criteria_selection';
   if (toolsCalled.includes('analyze_requirements')) return 'analysis';
-  if (
-    toolsCalled.includes('get_my_jobs') ||
-    toolsCalled.includes('get_job_bids') ||
-    toolsCalled.includes('get_delivery_status')
-  ) {
+
+  // If get_delivery_status was called, check if delivery exists
+  if (toolsCalled.includes('get_delivery_status')) {
+    const deliveryResult = toolResults?.get('get_delivery_status');
+    if (deliveryResult?.status === 'delivered') return 'delivery_review';
+    if (currentPhase === 'execution') return 'execution';
+  }
+
+  // If checking bids during awaiting_bids, transition to bid_selection if bids exist
+  if (toolsCalled.includes('get_job_bids')) {
+    const bidsResult = toolResults?.get('get_job_bids');
+    const bids = bidsResult?.bids as unknown[] | undefined;
+    if (bids && bids.length > 0) return 'bid_selection';
+    if (currentPhase === 'awaiting_bids') return 'awaiting_bids';
+  }
+
+  if (toolsCalled.includes('get_my_jobs')) {
     return 'status_inquiry';
   }
+
   return currentPhase;
 }
 
@@ -262,6 +276,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
 
     // Prepare response tracking
     const responseBlocks: GenUIBlock[] = [];
+    const toolResults = new Map<string, Record<string, unknown>>();
     let updatedContext = { ...session.context };
     const textBlockId = `text-${uuid().slice(0, 8)}`;
 
@@ -312,6 +327,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
             }
 
             const result = await executeButlerTool(toolName, args);
+            toolResults.set(toolName, result);
 
             // Update session context
             updatedContext = updateContextFromToolResult(
@@ -393,7 +409,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
             }
 
             // Infer phase from tools called
-            const nextPhase = inferPhaseFromTools(toolsCalled, session!.phase);
+            const nextPhase = inferPhaseFromTools(toolsCalled, session!.phase, toolResults);
 
             // Store butler message
             const butlerMessage: ChatMessage = {

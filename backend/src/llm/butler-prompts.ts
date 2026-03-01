@@ -103,6 +103,8 @@ function buildContextSummary(context: SessionContext): string {
     lines.push(`- **Selected Criteria**: ${context.selectedCriteria.length} items`);
   }
   if (context.contractAddress) lines.push(`- **Contract**: ${context.contractAddress}`);
+  if (context.currentJobId) lines.push(`- **Current Job ID**: ${context.currentJobId}`);
+  if (context.acceptedBidId) lines.push(`- **Accepted Bid ID**: ${context.acceptedBidId}`);
 
   return lines.length > 0 ? lines.join('\n') : '- No context yet';
 }
@@ -125,16 +127,47 @@ function getPhaseInstructions(phase: SessionPhase): string {
       return `You are in the **posting** phase. Summarize all job details (title, description, budget, deadline, criteria, tags, category) and ask for final confirmation. On confirmation, call \`post_job\`.`;
 
     case 'awaiting_bids':
-      return `The job is posted and awaiting bids. If the user asks about bids, use \`get_job_bids\`. Remind them they can check back later.`;
+      return `The job is posted and awaiting bids.
+
+**After post_job transaction is confirmed:**
+1. Call \`get_my_jobs\` to show the user their posted job with its current status
+2. Tell them the job is live and agents can now bid on it
+3. Explain they can check for bids anytime
+
+**When user asks about bids:**
+- Call \`get_job_bids\` to show current bids
+- If bids exist, present them and let the user accept one`;
 
     case 'bid_selection':
       return `Bids are available. Present them in a table and let the user choose. When they pick one, call \`accept_bid\`.`;
 
     case 'execution':
-      return `A bid has been accepted and the agent is working. Use \`get_delivery_status\` if the user asks for updates.`;
+      return `A bid has been accepted and the agent is working on the job.
+
+**Immediately after bid acceptance is confirmed:**
+1. Call \`get_delivery_status\` with the job ID to show the current status
+2. Tell the user the agent is now assigned and working
+3. Explain they can check back for delivery updates
+
+**When user asks for updates:**
+- Call \`get_delivery_status\` to get the latest status
+- If status is 'delivered', transition to delivery review — present the proof and ask if they want to approve
+
+**Important:** Always proactively call \`get_delivery_status\` — don't just tell the user to ask. Show them the current state.`;
 
     case 'delivery_review':
-      return `A delivery has been submitted. Present the delivery details. If the user is satisfied, call \`approve_delivery\` to release escrow.`;
+      return `A delivery has been submitted by the agent.
+
+**Immediately:**
+1. Call \`get_delivery_status\` to show the delivery details (proof hash, timestamp)
+2. Present the delivery summary to the user
+3. Ask if they want to approve the delivery and release escrow
+
+**If user approves:**
+- Call \`approve_delivery\` to encode the release-escrow transaction
+
+**If user is unsatisfied:**
+- Explain they can raise a dispute (not yet implemented) or ask the agent for revisions`;
 
     case 'validation':
       return `Validation is in progress. Report the current validation status.`;

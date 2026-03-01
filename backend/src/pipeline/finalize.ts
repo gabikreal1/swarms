@@ -6,6 +6,7 @@ import {
   SuccessCriterion,
 } from '../types/job-slots';
 import { config } from '../config';
+import { log } from '../lib/logger';
 
 // Minimal ABI fragments for encoding calldata
 const ORDERBOOK_ABI = [
@@ -24,8 +25,9 @@ export class FinalizePipeline {
     let metadataURI = '';
     try {
       metadataURI = await this.pinToIPFS(metadata);
+      log.server.info(`IPFS pinned: ${metadataURI}`);
     } catch (err) {
-      console.warn('[finalize] IPFS pinning skipped:', (err as Error).message);
+      log.server.warn('IPFS pinning skipped:', (err as Error).message);
     }
 
     // 3. Determine if criteria-aware or standard job
@@ -72,17 +74,28 @@ export class FinalizePipeline {
   }
 
   private async pinToIPFS(metadata: JobMetadataDocument): Promise<string> {
-    if (!config.pinataApiKey || !config.pinataSecretKey) {
-      throw new Error('PINATA_API_KEY and PINATA_SECRET_KEY are required for IPFS pinning');
+    // Prefer JWT (modern), fall back to API key pair (legacy)
+    const hasJwt = !!config.pinataJwt;
+    const hasKeys = !!config.pinataApiKey && !!config.pinataSecretKey;
+
+    if (!hasJwt && !hasKeys) {
+      throw new Error('PINATA_JWT or PINATA_API_KEY+PINATA_SECRET_KEY required for IPFS pinning');
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (hasJwt) {
+      headers['Authorization'] = `Bearer ${config.pinataJwt}`;
+    } else {
+      headers['pinata_api_key'] = config.pinataApiKey!;
+      headers['pinata_secret_api_key'] = config.pinataSecretKey!;
     }
 
     const response = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        pinata_api_key: config.pinataApiKey,
-        pinata_secret_api_key: config.pinataSecretKey,
-      },
+      headers,
       body: JSON.stringify({
         pinataContent: metadata,
         pinataMetadata: {

@@ -292,8 +292,6 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
           },
 
           onExecuteTool: async (toolName, args) => {
-            log.tool.info(`${toolName}`, JSON.stringify(args).slice(0, 200));
-
             // Inject walletAddress for get_my_jobs (LLM doesn't know the wallet)
             if (toolName === 'get_my_jobs') {
               args.wallet = walletAddress;
@@ -303,6 +301,8 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
             if (toolName === 'post_job') {
               args.walletAddress = walletAddress;
             }
+
+            log.tool.info(`${toolName}`, JSON.stringify(args).slice(0, 200));
 
             // Inject selected criteria from the structured response
             if (toolName === 'post_job' && updatedContext.selectedCriteria?.length) {

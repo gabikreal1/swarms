@@ -33,6 +33,7 @@ const configSchema = z.object({
   validatorPrivateKey: z.string().optional(),
 
   // IPFS
+  pinataJwt: z.string().optional(),
   pinataApiKey: z.string().optional(),
   pinataSecretKey: z.string().optional(),
 
@@ -66,6 +67,7 @@ export const config = configSchema.parse({
   jobRegistryAddress: process.env.JOB_REGISTRY_ADDRESS?.trim(),
   validationOracleAddress: process.env.VALIDATION_ORACLE_ADDRESS?.trim(),
   validatorPrivateKey: process.env.VALIDATOR_PRIVATE_KEY?.trim(),
+  pinataJwt: process.env.PINATA_JWT,
   pinataApiKey: process.env.PINATA_API_KEY,
   pinataSecretKey: process.env.PINATA_SECRET_KEY,
   databaseUrl: process.env.DATABASE_URL,

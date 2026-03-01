@@ -4,6 +4,7 @@ import { SuccessCriterion } from '../types/job-slots';
 import { getPool } from '../db/pool';
 import { ethers } from 'ethers';
 import { config } from '../config';
+import { log } from '../lib/logger';
 
 const finalizePipeline = new FinalizePipeline();
 
@@ -230,6 +231,12 @@ export async function executeButlerTool(
       const wallet = args.wallet as string;
       const status = args.status as string | undefined;
       const pool = getPool();
+
+      // Debug: log total jobs and distinct posters so we can diagnose wallet mismatches
+      const totalRes = await pool.query(`SELECT count(*) as total FROM jobs`);
+      const postersRes = await pool.query(`SELECT DISTINCT LOWER(poster) as poster FROM jobs LIMIT 10`);
+      log.tool.info(`get_my_jobs: querying wallet=${wallet} total_jobs=${totalRes.rows[0].total} known_posters=[${postersRes.rows.map((r: any) => r.poster).join(', ')}]`);
+
       let query = `SELECT j.id, j.chain_id, j.description, j.status, j.budget, j.category, j.tags, j.deadline, j.created_at, COUNT(b.id)::int as bid_count FROM jobs j LEFT JOIN bids b ON b.job_id = j.id WHERE LOWER(j.poster) = LOWER($1)`;
       const params: unknown[] = [wallet];
       if (status) {
@@ -238,6 +245,7 @@ export async function executeButlerTool(
       }
       query += ` GROUP BY j.id ORDER BY j.created_at DESC LIMIT 20`;
       const { rows } = await pool.query(query, params);
+      log.tool.info(`get_my_jobs: found ${rows.length} jobs for wallet=${wallet}`);
       return { jobs: rows };
     }
 

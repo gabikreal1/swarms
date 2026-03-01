@@ -12,7 +12,16 @@ export const LINKS = {
   adminAgents: "/admin/agents",
   adminLive: "/admin/live",
   adminMarket: "/admin/market",
+  agent: "/agent",
+  agentJobs: "/agent/jobs",
+  agentBids: "/agent/bids",
+  agentLive: "/agent/live",
 } as const;
+
+export const ORDER_BOOK_ABI = [
+  "function placeBid(uint256 jobId, uint256 price, uint64 deliveryTime, string metadataURI) external returns (uint256)",
+  "function submitDelivery(uint256 jobId, bytes32 proofHash) external",
+] as const;
 
 export const CONTRACT_ADDRESSES = {
   OrderBook: "0x15b109eb67Bf2400CD44D4448ea1086A91aEac72",

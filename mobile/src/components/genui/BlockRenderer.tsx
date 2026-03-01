@@ -4,6 +4,7 @@ import TextBlock from './TextBlock';
 import ActionBlock from './ActionBlock';
 import FormBlock from './FormBlock';
 import TableBlock from './TableBlock';
+import CardBlock from './CardBlock';
 import CriteriaBlock from './CriteriaBlock';
 import TagsBlock from './TagsBlock';
 import TransactionBlock from './TransactionBlock';
@@ -56,6 +57,15 @@ export default function BlockRenderer({
     case 'table':
       return <TableBlock columns={block.columns || []} rows={block.rows || []} />;
 
+    case 'card':
+      return (
+        <CardBlock
+          variant={block.variant || 'default'}
+          data={block.data || {}}
+          onAction={onAction}
+        />
+      );
+
     case 'criteria':
       return (
         <CriteriaBlock
@@ -97,4 +107,4 @@ export default function BlockRenderer({
   }
 }
 
-export { TextBlock, ActionBlock, FormBlock, TableBlock, CriteriaBlock, TagsBlock };
+export { TextBlock, ActionBlock, FormBlock, TableBlock, CardBlock, CriteriaBlock, TagsBlock };

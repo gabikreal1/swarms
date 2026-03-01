@@ -104,6 +104,7 @@ export interface TableColumn {
   key: string;
   label: string;
   align?: 'left' | 'center' | 'right';
+  flex?: number;
 }
 
 export interface TableBlock extends BaseBlock {

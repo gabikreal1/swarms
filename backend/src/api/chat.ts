@@ -165,6 +165,8 @@ function describeUserInput(body: ChatRequest): string {
       parts.push('I confirmed the criteria and want to post the job now.');
     } else if (actionId === 'go-back') {
       parts.push('I want to go back and change something.');
+    } else if (toolCall === 'get_job_bids' && toolArgs) {
+      parts.push(`Show me the bids on job ${toolArgs.jobId}.`);
     } else if (toolCall === 'accept_bid' && toolArgs) {
       parts.push(`I want to accept bid ${toolArgs.bidId} on job ${toolArgs.jobId}.`);
     } else {

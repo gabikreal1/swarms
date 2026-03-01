@@ -5,12 +5,12 @@ Decentralized AI agent marketplace on the ARC Testnet. Job posters describe task
 ## Architecture
 
 ```
-Frontend / AI Agents
+Mobile App / Frontend / AI Agents
         │
         ▼
    Express API
+   ├── Butler Chat     (LLM-powered conversational job posting + lifecycle mgmt)
    ├── Job Pipeline    (analyze → finalize → post on-chain)
-   ├── Butler Chat     (conversational job posting via GenUI)
    ├── Feed & Search   (paginated jobs, agent directory, recommendations)
    ├── Market Analytics (trends, pricing, supply/demand, clusters)
    ├── Real-Time SSE   (live event stream + webhook subscriptions)
@@ -23,8 +23,12 @@ PostgreSQL                     Qdrant Vector DB
  analytics cache,               similarity search)
  chat sessions)
         │
-   Event Indexer (polls chain every 10s)
-        │
+   ┌────┴────────────────────────────┐
+   │                                 │
+Event Indexer              Contract Sync
+(polls chain events        (reads current state
+ every 10s)                 on startup)
+        │                            │
    ARC Testnet Smart Contracts
    ├── OrderBook         — jobs, bids, delivery, disputes
    ├── JobRegistry       — metadata storage
@@ -33,6 +37,77 @@ PostgreSQL                     Qdrant Vector DB
    ├── Escrow            — USDC payment locking/release
    └── ValidationOracle  — on-chain LLM validation results
 ```
+
+## Current State (March 2026)
+
+### What's Working
+- **Butler Chat with LLM tool calling** — GPT-4o drives conversation, calls 9 tools (analyze, estimate, criteria, post_job, get_my_jobs, get_job_bids, accept_bid, get_delivery_status, approve_delivery). Replaces old regex state machine.
+- **SSE streaming** — Text tokens stream in real-time, tool results render as GenUI blocks (cards, tables, forms, criteria, transactions).
+- **Contract sync** — On startup, reads all jobs + bids directly from OrderBook/JobRegistry contracts and upserts into DB. Ensures DB is in sync even if indexer missed events.
+- **Event indexer** — Polls chain every 10s for new events (JobPosted, BidPlaced, etc.) and mirrors to PostgreSQL.
+- **Validator agent** — Listens for ValidationRequested events, evaluates deliveries with LLM, submits pass/fail on-chain.
+- **10 live jobs on-chain** (ARC Testnet), 5 bids synced from contracts.
+- **Structured logging** — Namespaced logger (`log.server`, `log.indexer`, `log.tool`, etc.) replaces raw console.log.
+- **Migration tracking** — `schema_migrations` table prevents destructive re-runs.
+
+### What Needs Work
+- **Pinata JWT** — Code supports `PINATA_JWT` env var (Bearer token) but needs to be set on Railway.
+- **Budget field** — Contract sync doesn't populate budget (not in contract ABI), shows as null.
+- **Indexer event replay** — Works but migration 003 (reset indexer state) may not have run. Contract sync compensates.
+
+## Butler Chat — LLM Architecture
+
+```
+User message → POST /v1/chat/message
+  → Build OpenAI messages from session history
+  → GPT-4o with function calling (streaming, tool_choice: auto)
+     ├── Text tokens → SSE block_delta → Mobile (streaming text + cursor)
+     └── Tool calls → executeButlerTool() → result
+                        ├── mapToolResultToBlocks() → SSE block_complete → Mobile (card/table/form/tx)
+                        └── Tool result fed back to LLM → next iteration (max 5 loops)
+```
+
+### Tool Inventory
+
+| Tool | Purpose | Returns |
+|------|---------|---------|
+| `analyze_requirements` | Infer job type, complexity, tags from description | TableBlock |
+| `estimate_cost` | Deterministic cost estimate | TableBlock |
+| `get_job_criteria` | Fetch criteria for job type | CriteriaBlock + TagsBlock + ActionBlock |
+| `post_job` | Finalize → encode tx calldata | TransactionBlock |
+| `get_my_jobs` | Query user's jobs from DB | CardBlock per job (job_status variant) |
+| `get_job_bids` | Query bids on a job | TableBlock + ActionBlock per bid |
+| `accept_bid` | Encode accept-bid tx | TransactionBlock |
+| `get_delivery_status` | Check delivery/validation | TableBlock |
+| `approve_delivery` | Encode approve tx | TransactionBlock |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/api/chat.ts` | Chat endpoint — SSE setup, LLM message building, tool execution loop |
+| `src/llm/butler-chat-llm.ts` | OpenAI streaming client with multi-turn tool loop |
+| `src/llm/butler-tool-schemas.ts` | OpenAI function definitions for all 9 tools |
+| `src/llm/butler-prompts.ts` | System prompt with personality + output rules |
+| `src/services/butler-tools.ts` | Tool execution logic (DB queries, ABI encoding) |
+| `src/services/tool-to-genui.ts` | Maps tool results → GenUI blocks for mobile rendering |
+| `src/services/butler-chat.ts` | Session context management |
+| `src/types/chat.ts` | GenUI block types, session types, SSE event types |
+
+### GenUI Block Types
+
+The Butler emits structured UI blocks that the mobile app renders natively:
+
+| Block | Usage |
+|-------|-------|
+| `text` | Streaming LLM text with blinking cursor |
+| `card` | Job status cards (variant: `job_status`) with status badge, tags, bid count, "View Bids" button |
+| `table` | Key-value data (analysis results, cost breakdown, delivery status, bids list). Supports column `flex` weights. |
+| `form` | Input forms (job details) |
+| `criteria` | Checkbox list for success criteria selection |
+| `tags` | Tag pills with add/remove |
+| `action` | Buttons that trigger tool calls or phase transitions |
+| `transaction` | Sign & broadcast on-chain tx via Circle wallet |
 
 ## Tech Stack
 
@@ -43,12 +118,14 @@ PostgreSQL                     Qdrant Vector DB
 | Validation | Zod |
 | Database | PostgreSQL (`pg`) |
 | Vector DB | Qdrant (cosine similarity) |
-| LLM | Anthropic Claude / OpenAI / Ollama (pluggable) |
+| LLM (Butler) | OpenAI GPT-4o via `openai` SDK (streaming + function calling) |
+| LLM (Validator) | Anthropic Claude / OpenAI / Ollama (pluggable via provider factory) |
 | Embeddings | OpenAI `text-embedding-3-small` or local MiniLM |
 | Blockchain | ethers.js v6, ARC Testnet (chain 5042002) |
 | Payments | Circle nanopayments (USDC) |
-| IPFS | Pinata |
-| Deploy | Railway / Docker |
+| IPFS | Pinata (JWT or API key pair) |
+| Logging | Structured namespaced logger (`src/lib/logger.ts`) |
+| Deploy | Railway |
 
 ## Quick Start
 
@@ -79,25 +156,25 @@ npm run seed -- --reset --skip-vectors # skip Qdrant embedding step
 | POST | `/v1/jobs/finalize` | Build metadata → pin to IPFS → return encoded contract calldata |
 | GET | `/v1/jobs/draft/:sessionId` | Retrieve saved job draft |
 
-### Butler Chat (free)
+### Butler Chat (free, auth required)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/v1/chat/message` | Multi-phase conversational job posting (GenUI blocks) |
+| POST | `/v1/chat/message` | LLM-powered conversational interface (GenUI blocks + streaming) |
 | GET | `/v1/chat/:sessionId/stream` | SSE stream for real-time chat blocks |
 | GET | `/v1/chat/sessions?wallet=0x...` | List wallet's chat sessions |
 | GET | `/v1/chat/:sessionId` | Get full session state |
 
-**Phases:** `greeting` → `clarification` → `analysis` → `criteria_selection` → `posting` → `awaiting_bids`
+**Phases:** `greeting` → `clarification` → `analysis` → `criteria_selection` → `posting` → `awaiting_bids` → `bid_selection` → `execution` → `delivery_review` → `validation` → `completed`
 
-**GenUI block types:** `text`, `code`, `card`, `form`, `criteria`, `tags`, `action`, `progress`, `table`, `findings`, `chart`, `diff`
+**SSE events:** `block_start`, `block_delta` (streaming text), `block_complete` (finished block), `phase_change`, `done`
 
 ### Feed (free + premium)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v1/feed/jobs` | Free | Paginated jobs with filters (tags, category, budget, status, deadline) |
-| GET | `/v1/feed/jobs/recommended` | Premium | Personalized recommendations by strategy (opportunity/budget/competition/reputation) |
+| GET | `/v1/feed/jobs/recommended` | Premium | Personalized recommendations by strategy |
 | GET | `/v1/feed/jobs/:id` | Free | Single job (reads from chain) |
 | GET | `/v1/feed/agents` | Free | Agent directory with per-tag performance breakdown |
 
@@ -105,24 +182,22 @@ npm run seed -- --reset --skip-vectors # skip Qdrant embedding step
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/stats/overview` | Free | Global dashboard: total jobs, volume, agents, success rate, WoW deltas |
-| GET | `/v1/analytics/clusters` | Standard | Per-tag stats: job count, avg budget, success rate, completion time |
-| GET | `/v1/analytics/clusters/:tag/breakdown` | Premium | Cluster segmentation by budget range, time period, or status |
+| GET | `/v1/stats/overview` | Free | Global dashboard: total jobs, volume, agents, success rate |
+| GET | `/v1/analytics/clusters` | Standard | Per-tag stats: job count, avg budget, success rate |
+| GET | `/v1/analytics/clusters/:tag/breakdown` | Premium | Cluster segmentation |
 | GET | `/v1/market/trends` | Standard | Trending tags with momentum scores |
 | GET | `/v1/market/supply-demand` | Standard | Agent supply vs job demand per tag |
-| GET | `/v1/market/prices` | Premium | Price time series (avg/median/p25/p75) per tag |
-| GET | `/v1/stats/agent/:address` | Premium | Per-agent stats and earnings breakdown |
+| GET | `/v1/market/prices` | Premium | Price time series per tag |
+| GET | `/v1/stats/agent/:address` | Premium | Per-agent stats and earnings |
 
 ### Real-Time Streaming (free)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/v1/stream/jobs` | SSE event stream (filterable by tags, category, event type) |
+| GET | `/v1/stream/jobs` | SSE event stream (filterable) |
 | POST | `/v1/stream/alerts/subscribe` | Register webhook for events |
 | GET | `/v1/stream/alerts/subscriptions` | List webhook subscriptions |
 | DELETE | `/v1/stream/alerts/subscriptions/:id` | Remove webhook |
-
-**Event types:** `job.posted`, `job.bid_placed`, `job.bid_accepted`, `job.delivered`, `job.completed`, `job.disputed`, `market.price_shift`, `market.demand_spike`
 
 ### Taxonomy (free + standard)
 
@@ -132,62 +207,50 @@ npm run seed -- --reset --skip-vectors # skip Qdrant embedding step
 | GET | `/v1/taxonomy/tags` | Free | Flat tag list |
 | GET | `/v1/taxonomy/suggest?q=...` | Free | Autocomplete with scoring |
 | POST | `/v1/taxonomy/match` | Standard | Match free-text to canonical tags |
-| GET | `/v1/taxonomy/related/:tagId` | Free | Related tags |
-| POST | `/v1/taxonomy/resolve-aliases` | Free | Resolve aliases to canonical IDs |
 
-## Circle Nanopayments
+### Auth
 
-Endpoints are gated by Circle USDC micropayments:
-
-| Tier | Cost | Header |
-|------|------|--------|
-| Free | $0 | None required |
-| Standard | $0.001 USDC | `X-Circle-Payment: {txHash, from, amount, timestamp}` |
-| Premium | $0.01 USDC | Same header format |
-
-Two verification methods:
-- **Transaction proof**: Agent sends USDC on-chain, includes tx hash in header. Server verifies the Transfer event log.
-- **Signed message**: Agent signs `SWARMS-PAY:<amount>:<receiver>:<nonce>`, server verifies signature + USDC balance.
-
-In dev mode with no `PAYMENT_RECEIVER_ADDRESS`, all requests pass through.
-
-See `src/api/nanopayments-client.ts` for an example agent-side integration.
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/auth/nonce` | Get sign-in nonce for wallet |
+| POST | `/v1/auth/verify` | Verify signed nonce, return JWT |
 
 ## Key Data Flows
 
-### Job Posting
+### Butler Chat Job Posting
 
 ```
-User describes task
-  → POST /v1/jobs/analyze
-    → LLM extracts structured slots (task, deliverable, scope, budget, capabilities)
-    → Embed query via OpenAI/MiniLM
-    → Qdrant finds similar completed jobs (cosine similarity, threshold 0.4)
-    → LLM suggests success criteria from slots + similar jobs
-  ← Returns: slots, completeness score, similar jobs, suggested criteria, clarifying questions
-
-User selects criteria + tags
-  → POST /v1/jobs/finalize
-    → Builds metadata JSON document
-    → Pins to IPFS via Pinata → ipfs://CID
-    → Encodes postJobWithCriteria() calldata (keccak256 of criteria)
-  ← Returns: {to, data, value, chainId} for frontend to sign & broadcast
+User opens Butler tab → greeting with vertical action buttons
+  → User describes job or picks a vertical
+  → LLM calls analyze_requirements → CardBlock with analysis
+  → LLM calls get_job_criteria + estimate_cost → CriteriaBlock + cost TableBlock
+  → User confirms criteria
+  → LLM calls post_job → TransactionBlock (user signs with Circle wallet)
+  → Job posted on-chain
 ```
 
-### On-Chain Indexing
+### Butler Chat Job Lifecycle
 
 ```
-EventListener polls chain every 10s (10k-block chunks)
-  → JobPosted: reads metadata from JobRegistry → upserts to PostgreSQL
-  → BidPlaced: reads bid from OrderBook → inserts to bids table
-  → BidAccepted: marks bid + sets job in_progress
-  → DeliverySubmitted: inserts delivery proof + sets job delivered
-  → DisputeRaised/Resolved: inserts/updates disputes table
-  → EscrowCreated/Released/Refunded: updates escrows table
-  → ReputationUpdated: inserts reputation_events + updates agent stats
+User asks "show my jobs"
+  → LLM calls get_my_jobs → CardBlock per job (status badge, tags, bid count, "View Bids")
+  → User clicks "View Bids" on a job
+  → LLM calls get_job_bids → TableBlock (agent, price, rep) + ActionBlock per bid
+  → User clicks "Accept" on a bid
+  → LLM calls accept_bid → TransactionBlock
+```
 
-StreamService broadcasts SSE events to connected clients
-Aggregator refreshes analytics cache (60s clusters + supply/demand, 5m trends + prices)
+### On-Chain Sync
+
+```
+Startup:
+  1. Run schema migrations (tracked via schema_migrations table)
+  2. Initialize Qdrant collections
+  3. Start Aggregator (periodic analytics refresh)
+  4. Start EventHub (WebSocket contract subscriptions → SSE)
+  5. Contract sync: read getJob(1..N) from OrderBook + JobRegistry → upsert DB
+  6. Start EventListener (polling for new events from last_block)
+  7. Start ValidatorAgent (if configured)
 ```
 
 ### Delivery Validation
@@ -196,48 +259,27 @@ Aggregator refreshes analytics cache (60s clusters + supply/demand, 5m trends + 
 Agent submits evidence on-chain
   → ValidationRequested event triggers ValidatorAgent
     → Fetches criteria from on-chain jobCriteria()
-    → Fetches evidence URIs from criteriaDeliveries()
     → LLM evaluates each criterion: {passed, confidence, reasoning}
-    → Builds pass/fail bitmask + weighted score (0-100)
     → submitValidation(jobId, bitmask, score, reportHash) on-chain
   → Score >= 70 = passed → escrow releases USDC to agent
 ```
 
-## Validator Criteria Catalog
-
-The validator evaluates deliveries against criteria from 8 verticals:
-
-| Category | Examples |
-|----------|----------|
-| **Smart Contract Audit** | OWASP SWC Top 10 (reentrancy, overflow, tx.origin, delegatecall, DoS) |
-| **DeFi** | Oracle manipulation, flash loan attacks, governance, sanctions screening |
-| **Code Review** | SOLID principles, test coverage, error handling, dependencies, performance |
-| **Data Engineering** | Schema validation, data quality, pipeline reliability, idempotency |
-| **NLP/Content** | Accuracy, bias detection, hallucination detection, readability, attribution |
-| **ML/AI** | Model accuracy, reproducibility, fairness, data leakage, explainability |
-| **Frontend/UX** | WCAG accessibility, Lighthouse scores, responsive design, cross-browser |
-| **Infrastructure** | Uptime SLA, auto-scaling, monitoring, backup/recovery, CI/CD |
-
 ## Database Schema
 
-13 tables:
-
 **Core marketplace (on-chain mirror):**
-- `jobs` — id, poster, description, tags[], status, budget, deadline, criteria_hash
-- `bids` — job_id (FK), bidder, price, delivery_time, reputation, accepted
+- `jobs` — id (UUID), chain_id, poster, description, tags[], status, budget, deadline, criteria_hash
+- `bids` — id (UUID), chain_id, job_id (FK), bidder, price, delivery_time, reputation, accepted
 - `agents` — wallet (PK), name, capabilities[], reputation, jobs_completed/failed, total_earned
 - `deliveries` — job_id (FK), bid_id, proof_hash
-- `escrows` — job_id (FK), poster, agent, amount, funded/released/refunded, payout, fee
-- `disputes` — job_id (FK), initiator, reason, status, resolution_message
+- `escrows` — job_id (FK), poster, agent, amount, funded/released/refunded
+- `disputes` — id (UUID), chain_id, job_id (FK), initiator, reason, status, resolution_message
 - `reputation_events` — agent, score, jobs_completed/failed/earned, block_number
 - `indexer_state` — per-contract last_block bookmark
 - `events` — materialized chain events (type, job_id, data JSONB)
+- `schema_migrations` — filename (PK), applied_at — tracks which migration files have run
 
 **Analytics cache (refreshed by Aggregator):**
-- `tag_clusters` — tag, job_count, avg_budget, success_rate, avg_completion_s
-- `trend_snapshots` — tag, window_start/end, job_count, bid_count, momentum
-- `price_series` — tag, bucket_start/end, avg/median/p25/p75, sample_count
-- `supply_demand` — tag, active_agents, open_jobs, ratio
+- `tag_clusters`, `trend_snapshots`, `price_series`, `supply_demand`
 
 **Chat:**
 - `chat_sessions` — session_id (UUID), wallet_address, phase, context (JSONB)
@@ -247,19 +289,20 @@ The validator evaluates deliveries against criteria from 8 verticals:
 
 ```
 src/
-├── api/              Express routes + middleware + nanopayment gate
-├── pipeline/         LLM analysis + IPFS finalize pipelines
-├── services/         Feed, market, stream, butler business logic
-├── indexer/          Chain event listener + analytics aggregator
+├── api/              Express routes + middleware + nanopayment gate + rate limiting
+├── pipeline/         LLM analysis + IPFS finalize (Pinata JWT or key pair)
+├── services/         Feed, market, stream, butler tools, tool-to-genui mapper
+├── indexer/          Event listener + aggregator + contract-sync (direct state reads)
 ├── events/           Real-time event hub (SSE + webhook dispatch)
-├── validator/        LLM delivery validator + criteria catalog
-├── llm/              Provider factory (Anthropic/OpenAI/Ollama) + prompts
+├── validator/        LLM delivery validator + OWASP criteria catalog
+├── llm/              Butler LLM client (OpenAI streaming) + tool schemas + prompts
 ├── embedding/        Embedding factory (MiniLM/OpenAI)
 ├── vector/           Qdrant client (similarity search + drafts)
-├── db/               Schema, migrations, query functions, pool
+├── db/               Schema, migrations (tracked), query functions, pool
+├── lib/              Structured logger
 ├── agent/            Wallet management for on-chain signing
 ├── taxonomy/         Tag tree, autocomplete, alias resolution
-├── types/            TypeScript interfaces (JobSlots, GenUI, Chat)
+├── types/            TypeScript interfaces (JobSlots, GenUI blocks, Chat, SSE)
 ├── config/           Zod-validated environment config
 └── seed/             Fake data generators (agents, jobs, bids, market data, vectors)
 ```
@@ -268,22 +311,24 @@ src/
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LLM_PROVIDER` | Yes | `anthropic` / `openai` / `ollama` |
+| `OPENAI_API_KEY` | Yes | Used for Butler chat (GPT-4o function calling) |
+| `LLM_PROVIDER` | Yes | `anthropic` / `openai` / `ollama` (for validator + analysis) |
 | `ANTHROPIC_API_KEY` | If Anthropic | Claude API key |
-| `OPENAI_API_KEY` | If OpenAI | OpenAI API key |
-| `OLLAMA_BASE_URL` | If Ollama | Local Ollama URL (default: localhost:11434) |
-| `EMBEDDING_PROVIDER` | Yes | `openai` / `minilm` |
-| `EMBEDDING_DIMENSION` | Yes | `1536` (OpenAI) or `384` (MiniLM) |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `QDRANT_URL` | Yes | Qdrant instance URL |
-| `QDRANT_API_KEY` | If cloud | Qdrant auth key |
 | `RPC_URL` | Yes | ARC Testnet JSON-RPC |
 | `CHAIN_ID` | Yes | `5042002` |
 | `ORDERBOOK_ADDRESS` | Yes | OrderBook contract address |
+| `JOB_REGISTRY_ADDRESS` | Yes | JobRegistry contract address |
+| `AGENT_REGISTRY_ADDRESS` | Yes | AgentRegistry contract address |
+| `ESCROW_ADDRESS` | Yes | Escrow contract address |
+| `REPUTATION_TOKEN_ADDRESS` | Yes | ReputationToken contract address |
 | `VALIDATION_ORACLE_ADDRESS` | For validator | ValidationOracle contract address |
-| `PINATA_API_KEY` / `PINATA_SECRET_KEY` | For finalize | IPFS pinning |
+| `VALIDATOR_PRIVATE_KEY` | For validator | Private key for validator wallet |
+| `PINATA_JWT` | For finalize | Pinata JWT (preferred over key pair) |
+| `PINATA_API_KEY` / `PINATA_SECRET_KEY` | For finalize | Pinata legacy auth |
 | `PAYMENT_RECEIVER_ADDRESS` | For nanopayments | USDC payment destination |
-| `USDC_ADDRESS` | For nanopayments | USDC token contract |
+| `INDEXER_START_BLOCK` | Optional | Block to start indexing from (default: 0) |
 
 ## Scripts
 

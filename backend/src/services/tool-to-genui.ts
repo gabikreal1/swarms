@@ -2,6 +2,7 @@ import { v4 as uuid } from 'uuid';
 import type {
   GenUIBlock,
   TableBlock,
+  CardBlock,
   CriteriaBlock,
   CriteriaItem,
   TagsBlock,
@@ -74,9 +75,9 @@ function buildAnalysisBlocks(result: Record<string, unknown>): GenUIBlock[] {
     id: blockId('table'),
     type: 'table',
     columns: [
-      { key: 'field', label: 'Field', align: 'left' },
-      { key: 'value', label: 'Value', align: 'left' },
-      { key: 'status', label: 'Status', align: 'center' },
+      { key: 'field', label: 'Field', align: 'left', flex: 1 },
+      { key: 'value', label: 'Value', align: 'left', flex: 2 },
+      { key: 'status', label: 'Status', align: 'center', flex: 1 },
     ],
     rows,
     sortable: false,
@@ -100,8 +101,8 @@ function buildCostBlocks(result: Record<string, unknown>): GenUIBlock[] {
     id: blockId('table'),
     type: 'table',
     columns: [
-      { key: 'item', label: 'Item', align: 'left' },
-      { key: 'amount', label: 'Amount', align: 'right' },
+      { key: 'item', label: 'Item', align: 'left', flex: 2 },
+      { key: 'amount', label: 'Amount', align: 'right', flex: 1 },
     ],
     rows,
     sortable: false,
@@ -201,27 +202,26 @@ function buildMyJobsBlocks(result: Record<string, unknown>): GenUIBlock[] {
     }];
   }
 
-  const rows = jobs.map((j) => ({
-    description: String(j.description || j.title || '-'),
-    status: String(j.status || '-'),
-    bids: Number(j.bid_count ?? j.bidCount ?? 0),
-    budget: String(j.budget ?? '-'),
-  }));
+  // Emit one card per job — much better on mobile than a cramped table
+  const blocks: GenUIBlock[] = jobs.map((j) => {
+    const card: CardBlock = {
+      id: blockId('card'),
+      type: 'card',
+      variant: 'job_status',
+      data: {
+        id: j.id ?? j.jobId ?? '',
+        chain_id: j.chain_id ?? j.chainId ?? null,
+        description: j.description || j.title || '',
+        status: j.status || 'open',
+        bid_count: Number(j.bid_count ?? j.bidCount ?? 0),
+        tags: j.tags || [],
+        budget: j.budget ?? null,
+      },
+    };
+    return card;
+  });
 
-  const table: TableBlock = {
-    id: blockId('table'),
-    type: 'table',
-    columns: [
-      { key: 'description', label: 'Description', align: 'left' },
-      { key: 'status', label: 'Status', align: 'center' },
-      { key: 'bids', label: 'Bids', align: 'center' },
-      { key: 'budget', label: 'Budget', align: 'right' },
-    ],
-    rows,
-    sortable: true,
-  };
-
-  return [table];
+  return blocks;
 }
 
 // ── get_job_bids ────────────────────────────────────────────
@@ -248,9 +248,9 @@ function buildBidsBlocks(result: Record<string, unknown>): GenUIBlock[] {
     id: blockId('table'),
     type: 'table',
     columns: [
-      { key: 'agent', label: 'Agent', align: 'left' },
-      { key: 'price', label: 'Price (USDC)', align: 'right' },
-      { key: 'reputation', label: 'Reputation', align: 'center' },
+      { key: 'agent', label: 'Agent', align: 'left', flex: 2 },
+      { key: 'price', label: 'Price', align: 'right', flex: 1 },
+      { key: 'reputation', label: 'Rep', align: 'center', flex: 1 },
     ],
     rows,
     sortable: true,
@@ -313,8 +313,8 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
     id: blockId('table'),
     type: 'table',
     columns: [
-      { key: 'field', label: 'Field', align: 'left' },
-      { key: 'value', label: 'Value', align: 'left' },
+      { key: 'field', label: 'Field', align: 'left', flex: 1 },
+      { key: 'value', label: 'Value', align: 'left', flex: 2 },
     ],
     rows,
     sortable: false,

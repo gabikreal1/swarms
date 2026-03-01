@@ -6,6 +6,7 @@ interface TableColumn {
   key: string;
   label: string;
   align?: 'left' | 'center' | 'right';
+  flex?: number;
 }
 
 interface TableBlockProps {
@@ -32,7 +33,7 @@ export default function TableBlock({ columns, rows }: TableBlockProps) {
         ]}
       >
         {(columns || []).map((col) => (
-          <View key={col.key} style={styles.cell}>
+          <View key={col.key} style={[styles.cell, { flex: col.flex ?? 1 }]}>
             <Text
               style={[
                 styles.headerText,
@@ -64,7 +65,7 @@ export default function TableBlock({ columns, rows }: TableBlockProps) {
           ]}
         >
           {(columns || []).map((col) => (
-            <View key={col.key} style={styles.cell}>
+            <View key={col.key} style={[styles.cell, { flex: col.flex ?? 1 }]}>
               <Text
                 style={[
                   styles.cellText,
@@ -102,7 +103,6 @@ const styles = StyleSheet.create({
   },
   cell: {
     paddingHorizontal: 8,
-    flex: 1,
   },
   headerText: {
     fontSize: 12,

@@ -1,6 +1,77 @@
-# Mobile
+# SWARMS Mobile
 
-React Native (Expo) mobile app for the SWARMS marketplace. Job posting with AI-assisted criteria, agent interaction, and gasless transactions via Circle Modular Wallets.
+React Native (Expo) mobile app for the SWARMS marketplace. AI-powered Butler chat for job posting and lifecycle management, gasless transactions via Circle Modular Wallets, real-time SSE streaming.
+
+## Current State (March 2026)
+
+### What's Working
+- **Butler tab** — Full LLM-powered conversational interface with streaming text + GenUI blocks
+- **Job posting flow** — Describe job → analysis → criteria selection → on-chain posting (all via Butler chat)
+- **Job lifecycle** — View your jobs as cards, view bids, accept bids, check delivery, approve — all through Butler
+- **SSE streaming** — Text tokens stream with blinking cursor, blocks appear with fade+slide animations after text finishes
+- **Circle wallet** — Passkey auth (Face ID), gasless tx signing via ERC-4337 paymaster
+- **Home feed** — Job cards with status, budget, deadline, bid count
+- **Job detail** — Full job view with bids list, status timeline
+
+### What Needs Work
+- Pre-existing TS error in `agents.tsx` (references `systemGray` color that doesn't exist in theme)
+- Agent directory screen (WIP)
+
+## Butler Chat — GenUI Block System
+
+The Butler tab renders structured UI blocks from the backend. Each block type has a dedicated React Native component:
+
+```
+Backend tool result → mapToolResultToBlocks() → SSE → useButlerChat hook → BlockRenderer → Component
+```
+
+### Block Components
+
+| Component | Block Type | Description |
+|-----------|-----------|-------------|
+| `TextBlock` | `text` | Streaming LLM text with animated blinking cursor (`▌`) |
+| `CardBlock` | `card` | Job status cards — status badge, description, tags, bid count, "View Bids" button |
+| `TableBlock` | `table` | Data tables with column flex weights (analysis, cost, bids, delivery status) |
+| `FormBlock` | `form` | Input forms with text/number/select/textarea fields |
+| `CriteriaBlock` | `criteria` | Success criteria checklist with add custom |
+| `TagsBlock` | `tags` | Tag pills with add/remove + custom input |
+| `ActionBlock` | `action` | Buttons (horizontal/vertical) that trigger tool calls |
+| `TransactionBlock` | `transaction` | Sign & broadcast on-chain tx via Circle wallet |
+| `AnimatedBlock` | (wrapper) | Fade-in + slide-up animation for non-text blocks |
+
+### Streaming Architecture
+
+```
+SSE Connection (GET /v1/chat/:sessionId/stream)
+  → block_start (type: text)     → create empty text block, show cursor
+  → block_delta                  → append token to text block
+  → block_complete (type: text)  → finalize text, hide cursor
+  → block_complete (type: card)  → queue if text still streaming
+  → block_complete (type: table) → queue if text still streaming
+  → done                         → flush queued blocks with 150ms stagger + animations
+```
+
+Key implementation: `useButlerChat.ts` queues non-text blocks during text streaming and flushes them with staggered delays after the `done` event, so blocks appear one by one with smooth entrance animations.
+
+### Card Block (job_status variant)
+
+Each job renders as a card with:
+- Color-coded status badge (green = open, orange = in_progress, purple = delivered, etc.)
+- Chain ID reference (#1, #2, ...)
+- Job description (up to 3 lines)
+- Tag pills (up to 4, with "+N" overflow)
+- Bid count + "View Bids" button (triggers `get_job_bids` tool call)
+
+### Action Flow
+
+When user clicks a button (e.g., "View Bids", "Accept Bid"):
+```
+CardBlock/ActionBlock → onAction(actionId, toolCall, toolArgs)
+  → useButlerChat.handleAction()
+  → POST /v1/chat/message { actionResponse: { actionId, toolCall, toolArgs } }
+  → Backend converts to user text for LLM ("Show me bids on job X")
+  → LLM calls appropriate tool → new blocks stream back
+```
 
 ## Setup
 
@@ -25,48 +96,15 @@ Then press:
 - `a` — open in Android Emulator
 - Scan the QR code with **Expo Go** on your phone
 
-Other launch modes:
-
-```bash
-npx expo start --ios   # directly open iOS
-npx expo start --android  # directly open Android
-npx expo start --web   # open in browser
-```
-
 ## Screens
 
-### Home (`HomeScreen`)
-Active jobs dashboard. Shows your posted and in-progress jobs with status indicators, budget, and deadline countdown. Pull-to-refresh fetches latest from the backend.
-
-### Post Job (`PostJobScreen`)
-Natural language job posting flow:
-
-1. Type a job description in plain English
-2. Backend analyzes it → structured slots + completeness score
-3. Review the **completeness bar** — see what's missing
-4. Accept/reject/modify suggested **success criteria**
-5. Answer clarifying questions to fill missing slots
-6. Hit "Post Job" → backend builds metadata + tx → wallet signs
-
-### Job Detail (`JobDetailScreen`)
-Full job view with:
-- Status timeline (Open → In Progress → Delivered → Completed)
-- Bid list with agent reputation, price, delivery time
-- Delivery evidence and validation status
-- Actions: accept bid, approve delivery, override validation
-
-### Chat (`ChatScreen`)
-SSE-streaming chat with the butler agent. Real-time progress updates as the agent works on your job.
-
-## Components
-
-| Component | Description |
-|-----------|-------------|
-| `CompletionBar` | Weighted progress bar showing job spec completeness (0-100%) |
-| `CriteriaList` | Checkboxes for accepting/rejecting suggested success criteria |
-| `TagSelector` | Autocomplete tag input backed by `/v1/taxonomy/suggest` |
-| `JobCard` | Job summary card with status badge, budget, deadline |
-| `BidCard` | Agent bid card with reputation score, price, delivery estimate |
+| Screen | Tab | Description |
+|--------|-----|-------------|
+| Home | Tab 1 | Active jobs dashboard, pull-to-refresh |
+| Post Job | Tab 2 | Job posting (legacy flow, mostly superseded by Butler) |
+| Butler | Tab 3 | LLM-powered chat — job posting + lifecycle management |
+| Agents | - | Agent directory (WIP) |
+| Job Detail | - | Full job view with bids, status timeline, actions |
 
 ## Wallet Integration
 
@@ -77,22 +115,17 @@ Uses [Circle Modular Wallets](https://developers.circle.com/w3s/modular-wallets)
 - **Gasless transactions** — Circle Gas Station paymaster covers gas fees
 - **ARC Testnet** — Chain ID 5042002
 
-The wallet flow:
-1. User authenticates with biometrics (passkey)
-2. Circle creates/recovers a smart account
-3. Transactions are sent via bundler with paymaster sponsorship
-4. User never sees gas fees or needs to hold native tokens
-
 See `src/wallet/circle.ts` for the full implementation.
 
 ## Configuration
 
 ### Backend URL
 
-Edit `src/api/client.ts` to point to your backend:
+Edit `src/api/client.ts`:
 
 ```typescript
-const API_BASE = 'http://localhost:3000'; // development
+const API_BASE = 'http://localhost:3000';          // development
+const API_BASE = 'https://your-railway-url.up';    // production
 ```
 
 ### Chain Config
@@ -100,51 +133,64 @@ const API_BASE = 'http://localhost:3000'; // development
 ARC Testnet chain definition is in `src/config/chains.ts`:
 
 ```typescript
-{
-  id: 5042002,
-  name: 'ARC Testnet',
-  rpcUrls: { default: { http: ['https://rpc.testnet.arc.network'] } },
-  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }
-}
+{ id: 5042002, name: 'ARC Testnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 } }
 ```
 
 ## Directory Structure
 
 ```
 mobile/
+├── app/                          # Expo Router screens (file-based routing)
+│   ├── (tabs)/
+│   │   ├── index.tsx             # Home — jobs dashboard
+│   │   ├── post.tsx              # Post Job (legacy flow)
+│   │   └── butler.tsx            # Butler Chat — main conversational UI
+│   ├── job/[id].tsx              # Job detail
+│   └── agents.tsx                # Agent directory (WIP)
 ├── src/
-│   ├── screens/
-│   │   ├── HomeScreen.tsx         # Jobs dashboard
-│   │   ├── PostJobScreen.tsx      # NL job posting flow
-│   │   ├── JobDetailScreen.tsx    # Job detail + bids + actions
-│   │   └── ChatScreen.tsx         # SSE agent chat
 │   ├── components/
-│   │   ├── CompletionBar.tsx      # Weighted completeness bar
-│   │   ├── CriteriaList.tsx       # Success criteria checkboxes
-│   │   ├── TagSelector.tsx        # Tag autocomplete input
-│   │   ├── JobCard.tsx            # Job summary card
-│   │   └── BidCard.tsx            # Agent bid card
-│   ├── navigation/
-│   │   └── AppNavigator.tsx       # Stack navigator
-│   ├── wallet/
-│   │   └── circle.ts             # Circle Modular Wallet setup
+│   │   ├── genui/                # GenUI block renderers
+│   │   │   ├── BlockRenderer.tsx # Switch on block.type → component
+│   │   │   ├── TextBlock.tsx     # Streaming text + blinking cursor
+│   │   │   ├── CardBlock.tsx     # Job status cards (new)
+│   │   │   ├── TableBlock.tsx    # Data tables with flex column weights
+│   │   │   ├── FormBlock.tsx     # Input forms
+│   │   │   ├── CriteriaBlock.tsx # Criteria checklist
+│   │   │   ├── TagsBlock.tsx     # Tag pills
+│   │   │   ├── ActionBlock.tsx   # Action buttons
+│   │   │   ├── TransactionBlock.tsx # On-chain tx signing
+│   │   │   └── AnimatedBlock.tsx # Fade+slide entrance animation wrapper
+│   │   ├── JobCard.tsx           # Job summary card (feed)
+│   │   └── BidCard.tsx           # Bid summary card (job detail)
+│   ├── hooks/
+│   │   └── useButlerChat.ts      # Butler chat state, SSE, block streaming, action handlers
 │   ├── api/
 │   │   └── client.ts             # Backend API client
-│   └── config/
-│       └── chains.ts             # ARC testnet chain definition
+│   ├── wallet/
+│   │   └── circle.ts             # Circle Modular Wallet setup
+│   ├── theme/
+│   │   ├── colors.ts             # Light/dark color tokens
+│   │   ├── useTheme.ts           # Theme hook
+│   │   ├── typography.ts         # Font scales
+│   │   └── spacing.ts            # Spacing scale
+│   ├── config/
+│   │   ├── chains.ts             # ARC testnet chain definition
+│   │   └── mock.ts               # Mock data for development
+│   └── contexts/
+│       └── NotificationContext.tsx # Push notification setup
 ├── app.json                       # Expo config
-├── babel.config.js
 ├── tsconfig.json
 └── package.json
 ```
 
 ## Tech Stack
 
-| Library | Version | Purpose |
-|---------|---------|---------|
-| Expo | ~52.0.0 | React Native framework |
-| React Native | 0.76.3 | Mobile UI |
-| `@react-navigation/native-stack` | ^7.0.0 | Screen navigation |
-| `viem` | ^2.21.0 | Ethereum interactions |
-| `@circle-fin/modular-wallets-core` | ^1.0.0 | Passkey wallets + gasless |
-| `react-native-sse` | ^1.2.1 | Server-Sent Events client |
+| Library | Purpose |
+|---------|---------|
+| Expo ~52 | React Native framework |
+| React Native 0.76 | Mobile UI |
+| Expo Router | File-based navigation |
+| `viem` | Ethereum interactions |
+| `@circle-fin/modular-wallets-core` | Passkey wallets + gasless |
+| `react-native-sse` | Server-Sent Events client |
+| `react-native-reanimated` | Animations |

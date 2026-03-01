@@ -193,7 +193,7 @@ export default function AdminJobs() {
                                     {job.bids.map((bid) => (
                                       <div key={bid.id} className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-xs">
                                         <span className="font-mono text-accent">{formatAddress(bid.bidder)}</span>
-                                        <span className="font-mono font-medium">{formatUSDC(parseFloat(bid.price))}</span>
+                                        <span className="font-mono font-medium">{formatUSDC(parseFloat(bid.price) / 1e6)}</span>
                                         <span className="text-muted flex-1 truncate">{bid.metadataURI}</span>
                                         {bid.accepted && (
                                           <span className="rounded-full bg-green/10 text-green px-2 py-0.5 text-[10px] font-medium">Accepted</span>

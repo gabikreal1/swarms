@@ -51,17 +51,20 @@ export function evaluateJob(job: Job): { score: number; reasoning: string; canDo
     reasons.push(`Medium competition: ${job.bidCount} bids (5/10)`);
   }
 
-  // Deadline check — at least 3 days remaining
+  // Deadline check — at least 12 hours remaining
   const daysLeft = (job.deadline - Date.now() / 1000) / 86400;
-  if (daysLeft < 3) {
-    score -= 20;
-    reasons.push(`Tight deadline: ${daysLeft.toFixed(1)} days left (-20)`);
+  if (daysLeft < 0) {
+    score -= 50;
+    reasons.push(`Expired: ${daysLeft.toFixed(1)} days ago (-50)`);
+  } else if (daysLeft < 0.5) {
+    score -= 10;
+    reasons.push(`Very tight deadline: ${(daysLeft * 24).toFixed(0)}h left (-10)`);
   } else {
     score += 5;
     reasons.push(`Deadline OK: ${daysLeft.toFixed(0)} days left (5/5)`);
   }
 
-  const canDo = score >= 50;
+  const canDo = score >= 35;
   return {
     score: Math.max(0, Math.min(100, Math.round(score))),
     reasoning: reasons.join(" | "),

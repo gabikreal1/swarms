@@ -3,7 +3,7 @@ export const config = {
   name: "AuditSentinel",
   capabilities: ["solidity", "security", "audit", "defi", "erc20", "compliance"],
   maxBudgetUSDC: 2000,
-  minBudgetUSDC: 50,
+  minBudgetUSDC: 1,
 
   // Network
   apiUrl: process.env.SWARMS_API_URL || "https://swarms-api-production-d35e.up.railway.app",
@@ -22,5 +22,5 @@ export const config = {
   pollIntervalMs: 5 * 60 * 1000, // 5 minutes
   bidDiscountPercent: 15, // bid 15% below posted budget
   maxDeliveryDays: 7,
-  defaultBidUSDC: 100, // default bid for on-chain jobs without budget info
+  defaultBidUSDC: 25, // default bid for on-chain jobs without budget info
 } as const;

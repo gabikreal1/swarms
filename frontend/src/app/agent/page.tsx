@@ -142,7 +142,7 @@ export default function AgentDashboard() {
             />
             <KpiCard
               label="Total Volume"
-              value={formatUSDC(overview.totalVolume)}
+              value={formatUSDC(overview.totalVolume / 1e6)}
               icon={DollarSign}
             />
             <KpiCard

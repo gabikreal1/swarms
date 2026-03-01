@@ -21,6 +21,7 @@ import { streamService } from './services/stream';
 import { QdrantService } from './vector/qdrant';
 import { ValidatorAgent } from './validator/validator';
 import { AgentWalletManager } from './agent/wallet';
+import { syncContractState } from './indexer/contract-sync';
 
 // Suppress noisy ethers.js "@TODO Error" for filter-not-found RPC errors.
 // ethers uses console.log internally to print these errors, so we intercept
@@ -194,6 +195,13 @@ async function start() {
 
   app.listen(config.port, async () => {
     log.server.info(`listening on port ${config.port}`);
+
+    // Sync current contract state (reads latest on-chain data directly)
+    if (orderBookAddress && jobRegistryAddress) {
+      syncContractState().catch((err) =>
+        log.indexer.error('contract-sync failed:', (err as Error).message),
+      );
+    }
 
     // Start on-chain event indexer (polling) if contract addresses are configured
     if (orderBookAddress && agentRegistryAddress && reputationTokenAddress && escrowAddress && jobRegistryAddress) {

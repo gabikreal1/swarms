@@ -31,7 +31,7 @@ export async function insertJob(p: InsertJobParams): Promise<string> {
     const res = await db().query(
       `INSERT INTO jobs (chain_id, poster, description, metadata_uri, tags, deadline, status, block_number, tx_hash)
        VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)
-       ON CONFLICT (chain_id) DO UPDATE SET
+       ON CONFLICT (chain_id) WHERE chain_id IS NOT NULL DO UPDATE SET
          description = EXCLUDED.description,
          metadata_uri = EXCLUDED.metadata_uri,
          tags = EXCLUDED.tags,
@@ -158,7 +158,7 @@ export async function insertBid(p: InsertBidParams): Promise<string> {
     const res = await db().query(
       `INSERT INTO bids (chain_id, job_id, bidder, price, delivery_time, reputation, metadata_uri, block_number, tx_hash)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT (chain_id) DO NOTHING
+       ON CONFLICT (chain_id) WHERE chain_id IS NOT NULL DO NOTHING
        RETURNING id`,
       [
         p.chainId.toString(),
@@ -273,7 +273,7 @@ export async function insertDispute(p: InsertDisputeParams): Promise<string> {
     const res = await db().query(
       `INSERT INTO disputes (chain_id, job_id, initiator, reason, block_number, tx_hash)
        VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (chain_id) DO NOTHING
+       ON CONFLICT (chain_id) WHERE chain_id IS NOT NULL DO NOTHING
        RETURNING id`,
       [
         p.chainId.toString(),

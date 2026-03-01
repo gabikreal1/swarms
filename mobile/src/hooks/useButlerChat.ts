@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Alert, FlatList } from 'react-native';
+import { Alert, ScrollView } from 'react-native';
 import { api, API_BASE } from '../api/client';
 import { initWallet } from '../wallet/circle';
 
@@ -44,7 +44,7 @@ export function useButlerChat(chatId: string | null) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [walletReady, setWalletReady] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
-  const flatListRef = useRef<FlatList>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const eventSourceRef = useRef<any>(null);
   const retryCountRef = useRef(0);
   const initialFetchDone = useRef(false);
@@ -59,7 +59,7 @@ export function useButlerChat(chatId: string | null) {
 
   const scrollToEnd = useCallback(() => {
     setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
+      scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, []);
 
@@ -157,7 +157,6 @@ export function useButlerChat(chatId: string | null) {
               break;
 
             case 'block_start':
-              console.log('[SSE] block_start:', data.blockId, data.blockType);
               setAgentTyping(true);
               if (data.blockType === 'text') {
                 setStreamingBlockIds(prev => new Set(prev).add(data.blockId));
@@ -210,7 +209,6 @@ export function useButlerChat(chatId: string | null) {
               break;
 
             case 'block_complete': {
-              console.log('[SSE] block_complete:', data.blockId, data.block?.type, 'content-len:', data.block?.content?.length ?? 'n/a');
               setStreamingBlockIds(prev => {
                 const next = new Set(prev);
                 next.delete(data.blockId);
@@ -218,7 +216,6 @@ export function useButlerChat(chatId: string | null) {
               });
               // Skip empty text blocks — they cause blank space
               if (data.block?.type === 'text' && !data.block?.content?.trim()) {
-                console.log('[SSE] skipping empty text block:', data.blockId);
                 // Remove the placeholder we added in block_start
                 setMessages((prev) => {
                   const last = prev[prev.length - 1];
@@ -268,12 +265,10 @@ export function useButlerChat(chatId: string | null) {
             }
 
             case 'phase_change':
-              console.log('[SSE] phase_change:', data.phase);
               setPhase(data.phase);
               break;
 
             case 'done':
-              console.log('[SSE] done:', data.messageId);
               setAgentTyping(false);
               break;
 
@@ -473,7 +468,7 @@ export function useButlerChat(chatId: string | null) {
     walletReady,
     walletError,
     retryWallet: tryInitWallet,
-    flatListRef,
+    scrollRef,
     scrollToEnd,
     sendTextMessage,
     handleActionWithContext,

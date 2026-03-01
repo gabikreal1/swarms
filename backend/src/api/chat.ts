@@ -2,6 +2,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import { z } from 'zod';
+import { log } from '../lib/logger';
 import type {
   ChatRequest,
   ChatResponse,
@@ -229,6 +230,9 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
         updatedAt: new Date().toISOString(),
       };
       await upsertSession(session);
+      log.chat.info(`new session ${sessionId} wallet=${walletAddress.slice(0, 10)}...`);
+    } else {
+      log.chat.info(`resume session ${sessionId} phase=${session.phase}`);
     }
 
     // Store user message
@@ -288,6 +292,8 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
           },
 
           onExecuteTool: async (toolName, args) => {
+            log.tool.info(`${toolName}`, JSON.stringify(args).slice(0, 200));
+
             // Inject walletAddress for get_my_jobs (LLM doesn't know the wallet)
             if (toolName === 'get_my_jobs') {
               args.wallet = walletAddress;
@@ -352,6 +358,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
           },
 
           onDone: (fullText, toolsCalled) => {
+            log.chat.info(`done session=${sessionId} tools=[${toolsCalled.join(',')}] textLen=${fullText.length}`);
             // Complete the text block
             const textBlock: GenUIBlock = {
               id: textBlockId,
@@ -404,6 +411,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
                 await insertMessage(sessionId, butlerMessage);
 
                 if (nextPhase !== session!.phase) {
+                  log.chat.info(`phase ${session!.phase} → ${nextPhase} session=${sessionId}`);
                   await updateSessionPhase(sessionId, nextPhase);
                   sendSSE(sessionId, { type: 'phase_change', phase: nextPhase });
                 }
@@ -429,7 +437,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
           },
 
           onError: (error) => {
-            console.error('[chat] LLM error:', error);
+            log.chat.error('LLM error:', error.message);
             sendSSE(sessionId, {
               type: 'error',
               message: error.message,
@@ -473,7 +481,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
       ).catch(reject);
     });
   } catch (err) {
-    console.error('[chat] message error:', err);
+    log.chat.error('message error:', (err as Error).message);
     res.status(500).json({
       error: 'Chat processing failed',
       message: (err as Error).message,
@@ -503,6 +511,7 @@ router.get('/:sessionId/stream', (req: Request, res: Response) => {
     sseConnections.set(sessionId, new Set());
   }
   sseConnections.get(sessionId)!.add(res);
+  log.sse.info(`connected session=${sessionId} clients=${sseConnections.get(sessionId)!.size}`);
 
   // Clean up on disconnect
   req.on('close', () => {
@@ -513,6 +522,7 @@ router.get('/:sessionId/stream', (req: Request, res: Response) => {
         sseConnections.delete(sessionId);
       }
     }
+    log.sse.info(`disconnected session=${sessionId}`);
   });
 });
 
@@ -527,7 +537,7 @@ router.get('/sessions', optionalAuth, async (req: Request, res: Response) => {
     const sessions = await getSessionsByWallet(wallet);
     res.json({ sessions });
   } catch (err) {
-    console.error('[chat] sessions error:', err);
+    log.chat.error('sessions error:', (err as Error).message);
     res.status(500).json({ error: 'Failed to fetch sessions' });
   }
 });
@@ -553,7 +563,7 @@ router.get('/:sessionId', optionalAuth, async (req: Request, res: Response) => {
 
     res.json(session);
   } catch (err) {
-    console.error('[chat] get session error:', err);
+    log.chat.error('get session error:', (err as Error).message);
     res.status(500).json({ error: 'Failed to fetch session' });
   }
 });

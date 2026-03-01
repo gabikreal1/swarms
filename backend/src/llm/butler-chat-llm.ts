@@ -5,6 +5,7 @@ import type {
   ChatCompletionChunk,
 } from 'openai/resources/chat/completions';
 import { config } from '../config';
+import { log } from '../lib/logger';
 
 const MODEL = 'gpt-5.2';
 const DEFAULT_MAX_ITERATIONS = 5;
@@ -54,6 +55,7 @@ export class ButlerChatLLM {
     try {
       while (iteration < maxIterations) {
         iteration++;
+        log.llm.info(`iteration ${iteration}/${maxIterations} msgs=${conversationMessages.length}`);
 
         const stream = await this.client.chat.completions.create({
           model: MODEL,
@@ -107,8 +109,11 @@ export class ButlerChatLLM {
 
         // If no tool calls, we are done
         if (accumulatedToolCalls.size === 0) {
+          log.llm.info('no tool calls, finishing');
           break;
         }
+
+        log.llm.info(`${accumulatedToolCalls.size} tool call(s):`, Array.from(accumulatedToolCalls.values()).map(tc => tc.name).join(', '));
 
         // Build the assistant message with tool_calls for the conversation history
         const sortedToolCalls = Array.from(accumulatedToolCalls.values()).sort(

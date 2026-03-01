@@ -1,4 +1,5 @@
 import { ethers, Contract, Provider, WebSocketProvider, JsonRpcProvider } from "ethers";
+import { log } from "../lib/logger";
 import { getPool } from "../db/pool";
 import {
   insertJob,
@@ -137,13 +138,13 @@ export class EventListener {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
-    console.log("[EventListener] starting...");
+    log.indexer.info('starting...');
 
     // Do an initial catch-up, then poll on interval
     await this.poll();
     this.pollTimer = setInterval(() => {
       this.poll().catch((err) =>
-        console.error("[EventListener] poll error:", err),
+        log.indexer.error('poll error:', (err as Error).message),
       );
     }, this.pollIntervalMs);
   }
@@ -154,7 +155,7 @@ export class EventListener {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-    console.log("[EventListener] stopped");
+    log.indexer.info('stopped');
   }
 
   // ──────────────────────────────────────────────────────────
@@ -170,7 +171,10 @@ export class EventListener {
       await this.processContractEvents("ReputationToken", this.reputationToken, currentBlock);
       await this.processContractEvents("Escrow", this.escrowContract, currentBlock);
     } catch (err) {
-      console.error("[EventListener] poll failed:", (err as Error).message);
+      const msg = (err as Error).message || '';
+      // Suppress noisy RPC errors (filter expiry, rate limits)
+      if (msg.includes('filter not found') || msg.includes('coalesce')) return;
+      log.indexer.error('poll failed:', msg);
     }
   }
 
@@ -185,12 +189,16 @@ export class EventListener {
       : Number(lastBlock) + 1;
 
     if (fromBlock > currentBlock) {
-      console.warn(`[EventListener] ${name}: fromBlock ${fromBlock} is ahead of chain head ${currentBlock}, resetting to 0`);
+      log.indexer.warn(`${name}: fromBlock ${fromBlock} ahead of chain head ${currentBlock}, resetting`);
       fromBlock = 0;
       await setLastBlock(name, 0n);
     }
 
-    console.log(`[EventListener] ${name}: scanning blocks ${fromBlock} → ${currentBlock}`);
+    // Only log when there's a meaningful range to scan
+    const blocksToScan = currentBlock - fromBlock;
+    if (blocksToScan > 0) {
+      log.indexer.debug(`${name}: scanning ${blocksToScan} blocks (${fromBlock}→${currentBlock})`);
+    }
 
     // Process in chunks to avoid RPC limits (10k blocks, delay between queries)
     const chunkSize = 10_000;
@@ -208,17 +216,21 @@ export class EventListener {
 
       for (const eventName of eventNames) {
         try {
-          const logs = await contract.queryFilter(eventName, start, end);
-          totalLogs += logs.length;
-          for (const log of logs) {
+          const evLogs = await contract.queryFilter(eventName, start, end);
+          totalLogs += evLogs.length;
+          for (const evLog of evLogs) {
             try {
-              await this.handleLog(name, contract, log);
+              await this.handleLog(name, contract, evLog);
             } catch (err) {
-              console.error(`[EventListener] error handling ${name}:${eventName} at block ${log.blockNumber}:`, err);
+              log.indexer.error(`error handling ${name}:${eventName} at block ${evLog.blockNumber}:`, (err as Error).message);
             }
           }
         } catch (err) {
-          console.error(`[EventListener] queryFilter ${name}:${eventName} failed:`, (err as Error).message);
+          const msg = (err as Error).message || '';
+          // Suppress noisy RPC filter errors
+          if (!msg.includes('filter not found') && !msg.includes('coalesce')) {
+            log.indexer.error(`queryFilter ${name}:${eventName} failed:`, msg);
+          }
         }
         // Rate limit: wait 150ms between queries to stay under 20/sec
         await delay(150);
@@ -229,7 +241,7 @@ export class EventListener {
     }
 
     if (totalLogs > 0) {
-      console.log(`[EventListener] ${name}: processed ${totalLogs} events`);
+      log.indexer.info(`${name}: processed ${totalLogs} events`);
     }
   }
 
@@ -357,7 +369,7 @@ export class EventListener {
     // Resolve job UUID from chain_id
     const jobUuid = await getJobUuidByChainId(chainJobId);
     if (!jobUuid) {
-      console.error(`[EventListener] BidPlaced: no job found for chain_id ${chainJobId}`);
+      log.indexer.error(` BidPlaced: no job found for chain_id ${chainJobId}`);
       return;
     }
 
@@ -420,7 +432,7 @@ export class EventListener {
     const jobUuid = await getJobUuidByChainId(chainJobId);
     const bidUuid = await getBidUuidByChainId(chainBidId);
     if (!jobUuid || !bidUuid) {
-      console.error(`[EventListener] DeliverySubmitted: missing UUID for job=${chainJobId} bid=${chainBidId}`);
+      log.indexer.error(` DeliverySubmitted: missing UUID for job=${chainJobId} bid=${chainBidId}`);
       return;
     }
 
@@ -449,7 +461,7 @@ export class EventListener {
 
     const jobUuid = await getJobUuidByChainId(chainJobId);
     if (!jobUuid) {
-      console.error(`[EventListener] DisputeRaised: no job found for chain_id ${chainJobId}`);
+      log.indexer.error(` DisputeRaised: no job found for chain_id ${chainJobId}`);
       return;
     }
 
@@ -542,7 +554,7 @@ export class EventListener {
 
     const jobUuid = await getJobUuidByChainId(chainJobId);
     if (!jobUuid) {
-      console.error(`[EventListener] EscrowCreated: no job found for chain_id ${chainJobId}`);
+      log.indexer.error(` EscrowCreated: no job found for chain_id ${chainJobId}`);
       return;
     }
 

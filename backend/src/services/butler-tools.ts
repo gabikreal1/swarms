@@ -211,7 +211,7 @@ export async function executeButlerTool(
           exampleOutputs: { value: [], provenance: 'default', confidence: 0.5 },
         },
         acceptedCriteria,
-        walletAddress: '0x0000000000000000000000000000000000000000',
+        walletAddress: (args.walletAddress as string) || '0x0000000000000000000000000000000000000000',
         tags,
         category,
       });

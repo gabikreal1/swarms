@@ -23,70 +23,76 @@ export default function TableBlock({ columns, rows }: TableBlockProps) {
   };
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View style={styles.table}>
-        {/* Header */}
-        <View
-          style={[
-            styles.headerRow,
-            { borderBottomColor: colors.separator },
-          ]}
-        >
-          {(columns || []).map((col) => (
-            <View key={col.key} style={styles.cell}>
-              <Text
-                style={[
-                  styles.headerText,
-                  {
-                    color: colors.secondaryLabel,
-                    textAlign: getTextAlign(col.align),
-                  },
-                ]}
-              >
-                {col.label}
-              </Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Rows */}
-        {(rows || []).map((row, rowIndex) => (
+    <View style={styles.tableWrapper}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={styles.table}>
+          {/* Header */}
           <View
-            key={rowIndex}
             style={[
-              styles.dataRow,
-              {
-                backgroundColor:
-                  rowIndex % 2 === 1
-                    ? colors.tertiarySystemBackground
-                    : 'transparent',
-                borderBottomColor: colors.separator,
-              },
+              styles.headerRow,
+              { borderBottomColor: colors.separator },
             ]}
           >
             {(columns || []).map((col) => (
               <View key={col.key} style={styles.cell}>
                 <Text
                   style={[
-                    styles.cellText,
+                    styles.headerText,
                     {
-                      color: colors.label,
+                      color: colors.secondaryLabel,
                       textAlign: getTextAlign(col.align),
                     },
                   ]}
                 >
-                  {String(row[col.key] ?? '')}
+                  {col.label}
                 </Text>
               </View>
             ))}
           </View>
-        ))}
-      </View>
-    </ScrollView>
+
+          {/* Rows */}
+          {(rows || []).map((row, rowIndex) => (
+            <View
+              key={rowIndex}
+              style={[
+                styles.dataRow,
+                {
+                  backgroundColor:
+                    rowIndex % 2 === 1
+                      ? colors.tertiarySystemBackground
+                      : 'transparent',
+                  borderBottomColor: colors.separator,
+                },
+              ]}
+            >
+              {(columns || []).map((col) => (
+                <View key={col.key} style={styles.cell}>
+                  <Text
+                    style={[
+                      styles.cellText,
+                      {
+                        color: colors.label,
+                        textAlign: getTextAlign(col.align),
+                      },
+                    ]}
+                  >
+                    {String(row[col.key] ?? '')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  tableWrapper: {
+    flexShrink: 1,
+    flexGrow: 0,
+  },
   table: {
     minWidth: '100%',
   },

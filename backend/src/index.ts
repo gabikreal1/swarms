@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './config';
+import { log } from './lib/logger';
 import { runMigrations } from './db/migrate';
 import jobRoutes from './api/routes';
 import marketRouter from './api/market';
@@ -20,6 +21,14 @@ import { streamService } from './services/stream';
 import { QdrantService } from './vector/qdrant';
 import { ValidatorAgent } from './validator/validator';
 import { AgentWalletManager } from './agent/wallet';
+
+// Suppress noisy ethers.js "@TODO Error" for filter-not-found RPC errors
+const originalStderr = process.stderr.write.bind(process.stderr);
+(process.stderr as any).write = (chunk: any, ...args: any[]) => {
+  const str = typeof chunk === 'string' ? chunk : chunk?.toString?.() ?? '';
+  if (str.includes('filter not found') || str.includes('@TODO Error: could not coalesce')) return true;
+  return (originalStderr as any)(chunk, ...args);
+};
 
 const app = express();
 
@@ -149,9 +158,9 @@ async function start() {
   try {
     const qdrant = new QdrantService();
     await qdrant.initCollections();
-    console.log('[Qdrant] Collections initialized');
+    log.qdrant.info('collections initialized');
   } catch (err) {
-    console.warn('[Qdrant] Failed to initialize collections:', (err as Error).message);
+    log.qdrant.warn('failed to initialize collections:', (err as Error).message);
   }
 
   // Start Aggregator (periodic materialized-view refreshes)
@@ -163,23 +172,16 @@ async function start() {
   if (orderBookAddress || config.validationOracleAddress) {
     const eventHub = new EventHub(streamService);
     eventHub.start().catch((err) =>
-      console.error('[EventHub] failed to start:', err),
+      log.hub.error('failed to start:', (err as Error).message),
     );
   } else {
-    console.log('[EventHub] skipped — no contract addresses configured');
+    log.hub.info('skipped — no contract addresses configured');
   }
 
   app.listen(config.port, async () => {
-    console.log(`SWARMS backend listening on port ${config.port}`);
+    log.server.info(`listening on port ${config.port}`);
 
     // Start on-chain event indexer (polling) if contract addresses are configured
-    console.log('[EventListener] config check:', {
-      orderBook: !!orderBookAddress,
-      agentRegistry: !!agentRegistryAddress,
-      reputationToken: !!reputationTokenAddress,
-      escrow: !!escrowAddress,
-      jobRegistry: !!jobRegistryAddress,
-    });
     if (orderBookAddress && agentRegistryAddress && reputationTokenAddress && escrowAddress && jobRegistryAddress) {
       const listener = new EventListener({
         rpcUrl: config.rpcUrl,
@@ -192,10 +194,10 @@ async function start() {
         startBlock: Number(process.env.INDEXER_START_BLOCK ?? 0),
       });
       listener.start().catch((err) =>
-        console.error('[EventListener] failed to start:', err),
+        log.indexer.error('failed to start:', (err as Error).message),
       );
     } else {
-      console.log('[EventListener] skipped — contract addresses not fully configured');
+      log.indexer.info('skipped — contract addresses not fully configured');
     }
 
     // Start Validator Agent if configured
@@ -205,15 +207,15 @@ async function start() {
       const validator = new ValidatorAgent(walletManager);
       await validator.init();
       await validator.startListening();
-      console.log(`[Validator] Listening — wallet ${walletManager.getWallet('validator')?.address}`);
+      log.validator.info(`listening — wallet ${walletManager.getWallet('validator')?.address}`);
     } else {
-      console.log('[Validator] skipped — VALIDATION_ORACLE_ADDRESS or VALIDATOR_PRIVATE_KEY not configured');
+      log.validator.info('skipped — VALIDATION_ORACLE_ADDRESS or VALIDATOR_PRIVATE_KEY not configured');
     }
   });
 }
 
 start().catch((err) => {
-  console.error('Failed to start server:', err);
+  log.server.error('failed to start:', err);
   process.exit(1);
 });
 

@@ -4,7 +4,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  FlatList,
+  ScrollView,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
@@ -29,7 +29,7 @@ export default function ButlerTab() {
     walletReady,
     walletError,
     retryWallet,
-    flatListRef,
+    scrollRef,
     scrollToEnd,
     sendTextMessage,
     handleActionWithContext,
@@ -38,7 +38,7 @@ export default function ButlerTab() {
     handleTagsChange,
   } = useButlerChat('new');
 
-  const renderMessage = ({ item }: { item: Message }) => {
+  const renderMessage = (item: Message) => {
     const isUser = item.role === 'user';
     const hasBlocks = item.blocks && item.blocks.length > 0;
 
@@ -203,14 +203,16 @@ export default function ButlerTab() {
       </View>
 
       {/* Messages */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        keyExtractor={(item) => item.id}
-        renderItem={renderMessage}
+      <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.messagesList}
         onContentSizeChange={scrollToEnd}
-      />
+        keyboardShouldPersistTaps="handled"
+      >
+        {messages.map((item) => (
+          <View key={item.id}>{renderMessage(item)}</View>
+        ))}
+      </ScrollView>
 
       {/* Typing indicator */}
       {agentTyping && (

@@ -199,8 +199,8 @@ export default function AdminOverview() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-mono">{agent.reputation}</p>
-                    <p className="text-[10px] text-muted">reputation</p>
+                    <p className="text-sm font-mono">{agent.completedJobs}</p>
+                    <p className="text-[10px] text-muted">{agent.completedJobs === 1 ? "job" : "jobs"} · {agent.successRate > 0 ? formatPercent(agent.successRate) : "—"}</p>
                   </div>
                 </div>
               ))

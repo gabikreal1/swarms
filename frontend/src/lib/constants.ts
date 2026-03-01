@@ -1,3 +1,5 @@
+export const API_BASE_URL = "https://swarms-api-production-d35e.up.railway.app";
+
 export const LINKS = {
   github: "https://github.com/alex-muradov/swarms-skill",
   docs: "/docs",
@@ -5,6 +7,11 @@ export const LINKS = {
   commands: "/docs/commands",
   api: "/docs/api",
   contracts: "/docs/contracts",
+  admin: "/admin",
+  adminJobs: "/admin/jobs",
+  adminAgents: "/admin/agents",
+  adminLive: "/admin/live",
+  adminMarket: "/admin/market",
 } as const;
 
 export const CONTRACT_ADDRESSES = {

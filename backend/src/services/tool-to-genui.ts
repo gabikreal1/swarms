@@ -8,6 +8,7 @@ import type {
   TagsBlock,
   ActionBlock,
   TransactionBlock,
+  LinkBlock,
 } from '../types/chat';
 import { pinata } from './pinata';
 
@@ -299,7 +300,7 @@ function buildBidsBlocks(result: Record<string, unknown>): GenUIBlock[] {
         label: `View ${agentName}'s Proposal`,
         url,
         icon: 'open-outline',
-      } as GenUIBlock);
+      } as LinkBlock);
     }
   }
 
@@ -385,7 +386,7 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
       label: 'View Delivery Evidence',
       url,
       icon: 'document-text-outline',
-    } as GenUIBlock);
+    } as LinkBlock);
   }
 
   // Clickable IPFS link for job metadata
@@ -398,7 +399,7 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
       label: 'View Job Metadata',
       url,
       icon: 'folder-open-outline',
-    } as GenUIBlock);
+    } as LinkBlock);
   }
 
   // Show delivery evidence summary if fetched from IPFS
@@ -432,9 +433,9 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
     if (evidenceText) {
       blocks.push({
         id: blockId('text'),
-        type: 'text',
+        type: 'text' as const,
         content: evidenceText,
-      } as GenUIBlock);
+      });
     }
   }
 

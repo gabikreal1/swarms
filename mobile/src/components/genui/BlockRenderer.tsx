@@ -8,6 +8,7 @@ import CardBlock from './CardBlock';
 import CriteriaBlock from './CriteriaBlock';
 import TagsBlock from './TagsBlock';
 import TransactionBlock from './TransactionBlock';
+import LinkBlock from './LinkBlock';
 
 interface BlockRendererProps {
   block: {
@@ -99,6 +100,15 @@ export default function BlockRenderer({
         />
       );
 
+    case 'link':
+      return (
+        <LinkBlock
+          label={block.label || 'Open Link'}
+          url={block.url || ''}
+          icon={block.icon}
+        />
+      );
+
     default:
       // Fallback: render as text if there's content, otherwise skip
       if (block.content) {
@@ -108,4 +118,4 @@ export default function BlockRenderer({
   }
 }
 
-export { TextBlock, ActionBlock, FormBlock, TableBlock, CardBlock, CriteriaBlock, TagsBlock };
+export { TextBlock, ActionBlock, FormBlock, TableBlock, CardBlock, CriteriaBlock, TagsBlock, LinkBlock };

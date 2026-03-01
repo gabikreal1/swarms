@@ -5,7 +5,7 @@ import type { JobSlots, SuccessCriterion } from './job-slots';
 export type GenUIBlockType =
   | 'text' | 'code' | 'card' | 'form' | 'criteria' | 'tags'
   | 'action' | 'progress' | 'table' | 'findings' | 'chart' | 'diff'
-  | 'transaction';
+  | 'transaction' | 'link';
 
 interface BaseBlock {
   id: string;
@@ -165,10 +165,17 @@ export interface TransactionBlock extends BaseBlock {
   criteriaCount?: number;
 }
 
+export interface LinkBlock extends BaseBlock {
+  type: 'link';
+  label: string;
+  url: string;
+  icon?: string;
+}
+
 export type GenUIBlock =
   | TextBlock | CodeBlock | CardBlock | FormBlock | CriteriaBlock
   | TagsBlock | ActionBlock | ProgressBlock | TableBlock
-  | FindingsBlock | ChartBlock | DiffBlock | TransactionBlock;
+  | FindingsBlock | ChartBlock | DiffBlock | TransactionBlock | LinkBlock;
 
 // ── Session Phases ────────────────────────────────────────
 

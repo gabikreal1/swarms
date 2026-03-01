@@ -106,6 +106,7 @@ export class EventListener {
   private jobRegistryReader: Contract;
   private orderBookReader: Contract;
   private running = false;
+  private polling = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pollIntervalMs: number;
 
@@ -141,8 +142,10 @@ export class EventListener {
     this.running = true;
     log.indexer.info('starting...');
 
-    // Do an initial catch-up, then poll on interval
-    await this.poll();
+    // Fire-and-forget initial catch-up so the interval timer starts immediately
+    this.poll().catch((err) =>
+      log.indexer.error('initial poll error:', (err as Error).message),
+    );
     this.pollTimer = setInterval(() => {
       this.poll().catch((err) =>
         log.indexer.error('poll error:', (err as Error).message),
@@ -164,9 +167,12 @@ export class EventListener {
   // ──────────────────────────────────────────────────────────
 
   private async poll(): Promise<void> {
+    if (this.polling) return; // prevent concurrent polls
+    this.polling = true;
     try {
       const currentBlock = await this.provider.getBlockNumber();
       // Process sequentially to avoid RPC rate limits
+      // OrderBook first (most important for new jobs/bids)
       await this.processContractEvents("OrderBook", this.orderBook, currentBlock);
       await this.processContractEvents("AgentRegistry", this.agentRegistry, currentBlock);
       await this.processContractEvents("ReputationToken", this.reputationToken, currentBlock);
@@ -176,6 +182,8 @@ export class EventListener {
       // Suppress noisy RPC errors (filter expiry, rate limits)
       if (msg.includes('filter not found') || msg.includes('coalesce')) return;
       log.indexer.error('poll failed:', msg);
+    } finally {
+      this.polling = false;
     }
   }
 
@@ -195,10 +203,14 @@ export class EventListener {
       await setLastBlock(name, 0n);
     }
 
-    // Only log when there's a meaningful range to scan
+    // Cap scan range per cycle so one contract doesn't block everything.
+    // If behind by more than 50k blocks, catch up over multiple poll cycles.
+    const maxScanRange = 50_000;
     const blocksToScan = currentBlock - fromBlock;
+    const effectiveEnd = blocksToScan > maxScanRange ? fromBlock + maxScanRange : currentBlock;
+
     if (blocksToScan > 0) {
-      log.indexer.debug(`${name}: scanning ${blocksToScan} blocks (${fromBlock}→${currentBlock})`);
+      log.indexer.info(`${name}: scanning ${Math.min(blocksToScan, maxScanRange)} blocks (${fromBlock}→${effectiveEnd})${blocksToScan > maxScanRange ? ` [${blocksToScan - maxScanRange} behind]` : ''}`);
     }
 
     // Process in chunks to avoid RPC limits (10k blocks, delay between queries)
@@ -207,8 +219,8 @@ export class EventListener {
     let totalLogs = 0;
     const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-    while (start <= currentBlock) {
-      const end = Math.min(start + chunkSize - 1, currentBlock);
+    while (start <= effectiveEnd) {
+      const end = Math.min(start + chunkSize - 1, effectiveEnd);
 
       // Query each event individually since some RPCs don't support "*" wildcard
       const eventNames = contract.interface.fragments

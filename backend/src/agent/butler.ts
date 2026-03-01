@@ -412,44 +412,46 @@ export class ButlerAgent extends EventEmitter {
       ethers.toUtf8Bytes(manifestJson),
     );
 
-    // If criteria exist, build evidence per criterion
-    if (task.criteria.length > 0) {
-      const evidenceItems = task.criteria.map((criterion) => {
-        const relevantResults = Array.from(stepResults.values());
-        return {
-          criterionIndex: criterion.index,
-          description: criterion.description,
-          evidence: JSON.stringify(relevantResults),
-        };
-      });
+    // Always pin the delivery manifest to IPFS so it's viewable
+    let evidenceURI = '';
+    try {
+      if (task.criteria.length > 0) {
+        // Build per-criterion evidence
+        const evidenceItems = task.criteria.map((criterion) => {
+          const relevantResults = Array.from(stepResults.values());
+          return {
+            criterionIndex: criterion.index,
+            description: criterion.description,
+            evidence: JSON.stringify(relevantResults),
+          };
+        });
 
-      const evidenceJson = JSON.stringify(evidenceItems);
-      const evidenceHash = ethers.keccak256(
-        ethers.toUtf8Bytes(evidenceJson),
-      );
-
-      // Pin evidence to IPFS
-      let evidenceURI = '';
-      try {
         const result = await pinata.pinJSON(
           { evidence: evidenceItems, manifest, proofHash },
           `swarms-evidence-job-${task.jobId}`,
         );
         evidenceURI = result.uri;
-      } catch (err) {
-        log.tool.warn(`IPFS pinning for evidence skipped:`, (err as Error).message);
+
+        // Build Merkle root from evidence hashes
+        const leaves = evidenceItems.map((item) =>
+          ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(item))),
+        );
+        const evidenceMerkleRoot = this.buildMerkleRoot(leaves);
+
+        return { proofHash, evidenceURI, evidenceMerkleRoot };
+      } else {
+        // No criteria — pin just the manifest
+        const result = await pinata.pinJSON(
+          { manifest, proofHash },
+          `swarms-delivery-job-${task.jobId}`,
+        );
+        evidenceURI = result.uri;
       }
-
-      // Build a simple Merkle root from evidence hashes
-      const leaves = evidenceItems.map((item) =>
-        ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(item))),
-      );
-      const evidenceMerkleRoot = this.buildMerkleRoot(leaves);
-
-      return { proofHash, evidenceURI, evidenceMerkleRoot };
+    } catch (err) {
+      log.tool.warn(`IPFS pinning for delivery skipped:`, (err as Error).message);
     }
 
-    return { proofHash };
+    return { proofHash, evidenceURI };
   }
 
   private buildMerkleRoot(leaves: string[]): string {
@@ -482,11 +484,13 @@ export class ButlerAgent extends EventEmitter {
 
     let tx: ethers.ContractTransactionResponse;
 
-    if (deliverables.evidenceURI && deliverables.evidenceMerkleRoot) {
+    if (deliverables.evidenceURI) {
+      // Use evidenceMerkleRoot if available, otherwise use proofHash as root
+      const merkleRoot = deliverables.evidenceMerkleRoot || deliverables.proofHash;
       tx = await this.orderBookContract.submitDeliveryWithEvidence(
         jobId,
         deliverables.proofHash,
-        deliverables.evidenceMerkleRoot,
+        merkleRoot,
         deliverables.evidenceURI,
       );
     } else {

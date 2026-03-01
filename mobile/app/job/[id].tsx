@@ -490,38 +490,25 @@ export default function JobDetailScreen() {
               value={new Date(job.delivery.deliveredAt).toLocaleDateString()}
             />
           )}
-          {(job.delivery?.evidenceGatewayUrl || job.delivery?.evidenceUri) && (
-            <SectionRow
-              label="View Evidence"
-              accessory="disclosure"
-              onPress={() => {
-                const url = job.delivery.evidenceGatewayUrl || job.delivery.evidenceUri;
-                Linking.openURL(url);
-              }}
-            />
-          )}
-          {job.delivery?.txHash && (
-            <SectionRow
-              label="View Delivery Transaction"
-              accessory="disclosure"
-              onPress={() => {
-                Linking.openURL(`https://testnet.explorer.arc.network/tx/${job.delivery.txHash}`);
-              }}
-            />
-          )}
-          {(job.metadataGatewayUrl || job.metadataUri) && (
-            <SectionRow
-              label="View Job on IPFS"
-              accessory="disclosure"
-              onPress={() => {
-                const url = job.metadataGatewayUrl || (job.metadataUri?.startsWith('ipfs://')
-                  ? job.metadataUri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')
-                  : job.metadataUri);
-                if (url) Linking.openURL(url);
-              }}
-              isLast
-            />
-          )}
+          {(() => {
+            // Resolve the best available IPFS link for delivery output
+            const evidenceUrl = job.delivery?.evidenceGatewayUrl || job.delivery?.evidenceUri;
+            const bidUrl = job.delivery?.bidProposalGatewayUrl || job.delivery?.bidProposalUri;
+            const jobUrl = job.metadataGatewayUrl || (job.metadataUri?.startsWith('ipfs://')
+              ? job.metadataUri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')
+              : job.metadataUri);
+            const deliveryIpfsUrl = evidenceUrl || bidUrl || jobUrl;
+            const deliveryLabel = evidenceUrl ? 'View Delivery Evidence' : bidUrl ? 'View Agent Proposal' : 'View Job on IPFS';
+
+            return deliveryIpfsUrl ? (
+              <SectionRow
+                label={deliveryLabel}
+                accessory="disclosure"
+                onPress={() => Linking.openURL(deliveryIpfsUrl)}
+                isLast
+              />
+            ) : null;
+          })()}
         </Section>
       )}
 

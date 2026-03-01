@@ -202,21 +202,22 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
     // Shared helper: fetch delivery for a job UUID
     const fetchDeliveryForJob = async (pool: ReturnType<typeof getPool>, jobUuid: string, chainId: number | null) => {
       const dResult = await pool.query(
-        `SELECT d.proof_hash, d.delivered_at, d.tx_hash FROM deliveries d WHERE d.job_id = $1`,
+        `SELECT d.proof_hash, d.delivered_at, d.tx_hash, d.bid_id FROM deliveries d WHERE d.job_id = $1`,
         [jobUuid],
       );
       if (dResult.rows.length === 0) return null;
       const d = dResult.rows[0];
+      const { pinata } = await import('../services/pinata');
+
       const delivery: Record<string, unknown> = {
         proofHash: d.proof_hash,
         deliveredAt: (d.delivered_at as Date)?.toISOString?.() ?? d.delivered_at,
         txHash: d.tx_hash,
       };
 
-      // Try to read on-chain evidence URI
+      // 1) Try on-chain criteriaDeliveries for evidence URI
       if (chainId) {
         try {
-          const { pinata } = await import('../services/pinata');
           const { ethers } = await import('ethers');
           const { config } = await import('../config');
           if (config.orderBookAddress) {
@@ -237,6 +238,26 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
           // best-effort
         }
       }
+
+      // 2) If no evidence URI, get the accepted bid's IPFS proposal as delivery content
+      if (!delivery.evidenceGatewayUrl && d.bid_id) {
+        try {
+          const bidResult = await pool.query(
+            `SELECT metadata_uri FROM bids WHERE id = $1`,
+            [d.bid_id],
+          );
+          const bidUri = bidResult.rows[0]?.metadata_uri as string | undefined;
+          if (bidUri && (bidUri.startsWith('ipfs://') || bidUri.startsWith('http'))) {
+            delivery.bidProposalUri = bidUri;
+            delivery.bidProposalGatewayUrl = bidUri.startsWith('ipfs://')
+              ? pinata.getGatewayUrl(bidUri)
+              : bidUri;
+          }
+        } catch {
+          // best-effort
+        }
+      }
+
       return delivery;
     };
 

@@ -18,7 +18,7 @@ export interface SimilarJobResult {
 }
 
 export interface CompletedJobPayload {
-  jobId: number;
+  jobId: string;
   title: string;
   description: string;
   tags: string[];

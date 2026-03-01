@@ -10,7 +10,7 @@ import type { SeededBid } from './bids';
 export async function seedReputation(
   agents: SeededAgent[],
   jobs: SeededJob[],
-  bidsByJob: Map<bigint, SeededBid[]>,
+  bidsByJob: Map<string, SeededBid[]>,
   genesisDate: Date,
 ): Promise<void> {
   const now = new Date();

@@ -157,7 +157,7 @@ export default function HomeTab() {
         <Button
           title="Browse Agents"
           variant="gray"
-          onPress={() => {}}
+          onPress={() => router.push('/agents')}
           style={styles.actionBtn}
         />
       </View>

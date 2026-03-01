@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
-import { USE_MOCKS, MOCK_NOTIFICATIONS } from '../config/mock';
 
 export type NotificationType = 'info' | 'success' | 'warning' | 'error';
 
@@ -161,25 +160,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     dispatch({ type: 'MARK_ALL_READ' });
   }, []);
 
-  // Seed mock notifications or connect to SSE stream
-  const seeded = useRef(false);
+  // Connect to SSE stream for real-time notifications
   useEffect(() => {
-    if (USE_MOCKS) {
-      if (seeded.current) return;
-      seeded.current = true;
-      // Seed historical notifications (no banners for these)
-      MOCK_NOTIFICATIONS.forEach((notif, i) => {
-        const notification: Notification = {
-          ...notif,
-          id: `mock-${i}`,
-          read: i >= 3, // first 3 unread, rest read
-          timestamp: Date.now() - (i * 1800000) - 60000, // staggered timestamps
-        };
-        dispatch({ type: 'ADD', notification });
-      });
-      return;
-    }
-
     let eventSource: any = null;
     try {
       const EventSource = require('react-native-sse').default;

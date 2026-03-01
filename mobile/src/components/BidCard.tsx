@@ -8,7 +8,8 @@ export type BidStatus = 'pending' | 'accepted' | 'rejected';
 
 interface BidCardProps {
   bid: {
-    id: number;
+    id: string;
+    chainId?: number | null;
     agentName: string;
     agentAddress?: string;
     price: string;
@@ -30,13 +31,14 @@ function shortenAddress(addr: string): string {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-function formatDeliveryTime(raw: string): string {
-  if (!raw || raw === 'N/A') return 'N/A';
+function formatDeliveryTime(raw: string | number | undefined | null): string {
+  if (raw == null || raw === '' || raw === 'N/A') return 'N/A';
+  const str = String(raw);
   // Already human-readable
-  if (/day|week|hour|month/i.test(raw)) return raw;
+  if (/day|week|hour|month/i.test(str)) return str;
   // Try to parse as hours number
-  const hours = parseFloat(raw.replace(/[^0-9.]/g, ''));
-  if (isNaN(hours)) return raw;
+  const hours = parseFloat(str.replace(/[^0-9.]/g, ''));
+  if (isNaN(hours)) return str;
   if (hours < 1) return `${Math.round(hours * 60)} min`;
   if (hours < 24) return `${Math.round(hours)}h`;
   if (hours < 168) {

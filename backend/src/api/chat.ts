@@ -9,7 +9,9 @@ import type {
   ChatSSEEvent,
   GenUIBlock,
   SessionPhase,
+  SessionContext,
 } from '../types/chat';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import {
   upsertSession,
   getSession,
@@ -18,16 +20,14 @@ import {
   updateSessionContext,
   getSessionsByWallet,
 } from '../db/chat-queries';
-import { executeButlerTool, BUTLER_TOOLS } from '../services/butler-tools';
+import { executeButlerTool } from '../services/butler-tools';
 import { updateContextFromToolResult } from '../services/butler-chat';
 import { getButlerSystemPrompt } from '../llm/butler-prompts';
-import { createLLMProvider } from '../llm/factory';
-import { LLMProvider } from '../llm/types';
-import { FinalizePipeline } from '../pipeline/finalize';
+import { getButlerLLM } from '../llm/butler-chat-llm';
+import { BUTLER_TOOL_SCHEMAS } from '../llm/butler-tool-schemas';
+import { mapToolResultToBlocks } from '../services/tool-to-genui';
 import { validateBody } from './middleware';
 import { optionalAuth } from './auth';
-
-const finalizePipeline = new FinalizePipeline();
 
 export const chatMessageSchema = z.object({
   walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
@@ -74,200 +74,135 @@ function sendSSE(sessionId: string, event: ChatSSEEvent): void {
   }
 }
 
-// Phase flow: determine next phase based on user input
-function inferNextPhase(
-  currentPhase: SessionPhase,
-  hasFormResponse: boolean,
-  hasActionResponse: boolean,
-  hasCriteriaResponse: boolean,
-  hasTagsResponse: boolean,
-): SessionPhase {
-  switch (currentPhase) {
-    case 'greeting':
-      if (hasActionResponse) return 'clarification';
-      return 'greeting';
-    case 'clarification':
-      if (hasFormResponse) return 'analysis';
-      return 'clarification';
-    case 'analysis':
-      return 'criteria_selection';
-    case 'criteria_selection':
-      if (hasCriteriaResponse || hasTagsResponse) return 'posting';
-      return 'criteria_selection';
-    case 'posting':
-      return 'awaiting_bids';
-    default:
-      return currentPhase;
-  }
-}
-
-// Build greeting blocks
-function buildGreetingBlocks(): GenUIBlock[] {
-  return [
-    {
-      id: `text-${uuid().slice(0, 8)}`,
-      type: 'text',
-      content: 'Welcome to the SWARMS Agent Marketplace! I can help you post jobs across multiple verticals. What kind of task do you need help with?',
-    } as GenUIBlock,
-    {
-      id: `action-${uuid().slice(0, 8)}`,
-      type: 'action',
-      actions: [
-        { id: 'v-audit', label: 'Smart Contract Audit', variant: 'primary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'audit' } },
-        { id: 'v-code-review', label: 'Code Review', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'code_review' } },
-        { id: 'v-data', label: 'Data Engineering', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'data_engineering' } },
-        { id: 'v-nlp', label: 'NLP / Content', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'nlp_content' } },
-        { id: 'v-ml', label: 'ML / AI', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'ml_ai' } },
-        { id: 'v-frontend', label: 'Frontend / UX', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'frontend_ux' } },
-        { id: 'v-infra', label: 'Infrastructure / DevOps', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'infrastructure' } },
-      ],
-      layout: 'vertical',
-    } as GenUIBlock,
-  ];
-}
-
-// Build clarification form blocks
-function buildClarificationBlocks(jobType?: string): GenUIBlock[] {
-  return [
-    {
-      id: `text-${uuid().slice(0, 8)}`,
-      type: 'text',
-      content: 'Great choice! Let me gather some details about your job. Please fill in what you can:',
-    } as GenUIBlock,
-    {
-      id: `form-${uuid().slice(0, 8)}`,
-      type: 'form',
-      formId: 'job-details',
-      fields: [
-        {
-          name: 'jobType',
-          label: 'Job Type',
-          type: 'select',
-          required: true,
-          defaultValue: jobType || '',
-          options: [
-            { label: 'Smart Contract Audit', value: 'audit' },
-            { label: 'Code Review', value: 'code_review' },
-            { label: 'Data Engineering', value: 'data_engineering' },
-            { label: 'NLP / Content', value: 'nlp_content' },
-            { label: 'ML / AI', value: 'ml_ai' },
-            { label: 'Frontend / UX', value: 'frontend_ux' },
-            { label: 'Infrastructure / DevOps', value: 'infrastructure' },
-          ],
-        },
-        {
-          name: 'description',
-          label: 'Job Description',
-          type: 'textarea',
-          placeholder: 'Describe what you need done...',
-          required: true,
-        },
-        {
-          name: 'budget',
-          label: 'Budget (USDC)',
-          type: 'number',
-          placeholder: '100',
-          validation: { min: 1 },
-        },
-        {
-          name: 'deadline',
-          label: 'Deadline',
-          type: 'text',
-          placeholder: 'e.g., 2 weeks, March 15',
-        },
-      ],
-      submitLabel: 'Analyze Job',
-      cancelLabel: 'Cancel',
-    } as GenUIBlock,
-  ];
-}
-
-// Build analysis blocks from tool results
-function buildAnalysisBlocks(
-  toolResult: Record<string, unknown>,
-  costResult: Record<string, unknown>,
-): GenUIBlock[] {
-  const jobType = toolResult.jobType as string || 'unknown';
-  const complexity = toolResult.complexity as string || 'moderate';
-  const cost = costResult.estimatedCostUSDC as number || 0;
-  const suggestedTags = (toolResult.suggestedTags as string[]) || [];
-
-  return [
-    {
-      id: `text-${uuid().slice(0, 8)}`,
-      type: 'text',
-      content: 'Here\'s my analysis of your job requirements:',
-    } as GenUIBlock,
-    {
-      id: `table-${uuid().slice(0, 8)}`,
-      type: 'table',
-      columns: [
-        { key: 'field', label: 'Category', align: 'left' },
-        { key: 'value', label: 'Detail', align: 'left' },
-        { key: 'status', label: 'Status', align: 'center' },
-      ],
-      rows: [
-        { field: 'Job Type', value: jobType.replace('_', ' '), status: 'Detected' },
-        { field: 'Complexity', value: complexity, status: 'Inferred' },
-        { field: 'Estimated Cost', value: `${cost} USDC`, status: 'Estimated' },
-        { field: 'Suggested Tags', value: suggestedTags.join(', '), status: 'Suggested' },
-      ],
-    } as GenUIBlock,
-  ];
-}
-
-// Build criteria selection blocks
-function buildCriteriaBlocks(
-  criteriaResult: Record<string, unknown>,
-  tags: string[],
-): GenUIBlock[] {
-  const criteria = (criteriaResult.criteria as any[]) || [];
-
-  const blocks: GenUIBlock[] = [
-    {
-      id: `text-${uuid().slice(0, 8)}`,
-      type: 'text',
-      content: 'Here are suggested success criteria for your job. Select the ones you want to include:',
-    } as GenUIBlock,
-  ];
-
-  if (criteria.length > 0) {
-    blocks.push({
-      id: `criteria-${uuid().slice(0, 8)}`,
-      type: 'criteria',
-      criteria: criteria.map((c: any) => ({
-        id: c.id,
-        description: c.description || c.name,
-        category: criteriaResult.jobType as string || 'general',
-        measurable: true,
-        source: 'llm_suggested' as const,
-        preselected: true,
-      })),
-      allowCustom: true,
-    } as GenUIBlock);
-  }
-
-  if (tags.length > 0) {
-    blocks.push({
-      id: `tags-${uuid().slice(0, 8)}`,
-      type: 'tags',
-      suggested: tags,
-      selected: tags,
-      allowCustom: true,
-    } as GenUIBlock);
-  }
-
-  blocks.push({
+// ── Vertical action buttons (appended after LLM greeting) ────
+function buildVerticalActionBlock(): GenUIBlock {
+  return {
     id: `action-${uuid().slice(0, 8)}`,
     type: 'action',
     actions: [
-      { id: 'confirm-criteria', label: 'Confirm & Post Job', variant: 'primary' },
-      { id: 'go-back', label: 'Go Back', variant: 'outline' },
+      { id: 'v-audit', label: 'Smart Contract Audit', variant: 'primary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'audit' } },
+      { id: 'v-code-review', label: 'Code Review', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'code_review' } },
+      { id: 'v-data', label: 'Data Engineering', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'data_engineering' } },
+      { id: 'v-nlp', label: 'NLP / Content', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'nlp_content' } },
+      { id: 'v-ml', label: 'ML / AI', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'ml_ai' } },
+      { id: 'v-frontend', label: 'Frontend / UX', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'frontend_ux' } },
+      { id: 'v-infra', label: 'Infrastructure / DevOps', variant: 'secondary', toolCall: 'analyze_requirements', toolArgs: { jobType: 'infrastructure' } },
     ],
-    layout: 'horizontal',
-  } as GenUIBlock);
+    layout: 'vertical',
+  } as GenUIBlock;
+}
 
-  return blocks;
+// ── Build OpenAI messages from session history ───────────────
+function buildLLMMessages(
+  session: { phase: SessionPhase; context: SessionContext; messages: ChatMessage[] },
+  walletAddress: string,
+  currentUserContent: string,
+): ChatCompletionMessageParam[] {
+  const systemPrompt = getButlerSystemPrompt(
+    walletAddress,
+    session.phase,
+    session.context,
+  );
+
+  const msgs: ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemPrompt },
+  ];
+
+  // Add session history (skip the last user message — we add it fresh below)
+  for (const msg of session.messages) {
+    if (msg.role === 'user') {
+      const textContent = msg.blocks
+        ?.filter(b => b.type === 'text')
+        .map(b => (b as any).content)
+        .join('\n') || '';
+      if (textContent) {
+        msgs.push({ role: 'user', content: textContent });
+      }
+    } else if (msg.role === 'butler') {
+      const textContent = msg.blocks
+        ?.filter(b => b.type === 'text')
+        .map(b => (b as any).content)
+        .join('\n') || '';
+      if (textContent) {
+        msgs.push({ role: 'assistant', content: textContent });
+      }
+    }
+  }
+
+  // Add current user message
+  if (currentUserContent) {
+    msgs.push({ role: 'user', content: currentUserContent });
+  }
+
+  return msgs;
+}
+
+// ── Translate structured responses into text for LLM ─────────
+function describeUserInput(body: ChatRequest): string {
+  const parts: string[] = [];
+
+  if (body.message) {
+    parts.push(body.message);
+  }
+
+  if (body.formResponse) {
+    const entries = Object.entries(body.formResponse.values)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ');
+    parts.push(`I filled out the job details form: ${entries}`);
+  }
+
+  if (body.actionResponse) {
+    const { actionId, toolCall, toolArgs } = body.actionResponse;
+    if (toolArgs?.jobType) {
+      parts.push(`I selected the "${toolArgs.jobType}" job vertical.`);
+    } else if (actionId === 'tx-confirmed') {
+      const txHash = (toolArgs?.txHash as string) || '';
+      parts.push(`Transaction confirmed: ${txHash}`);
+    } else if (actionId === 'confirm-criteria') {
+      parts.push('I confirmed the criteria and want to post the job now.');
+    } else if (actionId === 'go-back') {
+      parts.push('I want to go back and change something.');
+    } else if (toolCall === 'accept_bid' && toolArgs) {
+      parts.push(`I want to accept bid ${toolArgs.bidId} on job ${toolArgs.jobId}.`);
+    } else {
+      parts.push(`I clicked action: ${actionId}`);
+    }
+  }
+
+  if (body.criteriaResponse) {
+    parts.push(`I selected these criteria: ${body.criteriaResponse.selectedIds.join(', ')}`);
+    if (body.criteriaResponse.customCriteria?.length) {
+      parts.push(`Custom criteria: ${body.criteriaResponse.customCriteria.join(', ')}`);
+    }
+  }
+
+  if (body.tagsResponse) {
+    parts.push(`I selected these tags: ${body.tagsResponse.selectedTags.join(', ')}`);
+  }
+
+  return parts.join('\n');
+}
+
+// ── Infer phase from tools called ────────────────────────────
+function inferPhaseFromTools(
+  toolsCalled: string[],
+  currentPhase: SessionPhase,
+): SessionPhase {
+  if (toolsCalled.includes('approve_delivery')) return 'completed';
+  if (toolsCalled.includes('accept_bid')) return 'execution';
+  if (toolsCalled.includes('post_job')) return 'posting';
+  if (toolsCalled.includes('get_job_criteria')) return 'criteria_selection';
+  if (toolsCalled.includes('analyze_requirements')) return 'analysis';
+  if (
+    toolsCalled.includes('get_my_jobs') ||
+    toolsCalled.includes('get_job_bids') ||
+    toolsCalled.includes('get_delivery_status')
+  ) {
+    return 'status_inquiry';
+  }
+  return currentPhase;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -277,9 +212,7 @@ function buildCriteriaBlocks(
 router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (req: Request, res: Response) => {
   try {
     const body = req.body as ChatRequest;
-    // Use authenticated wallet if available, fall back to body for unauthenticated clients
     const walletAddress = req.walletAddress || body.walletAddress;
-    const { message } = body;
 
     // Get or create session
     let sessionId = body.sessionId || uuid();
@@ -299,296 +232,246 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
     }
 
     // Store user message
+    const userText = describeUserInput(body);
     const userMessage: ChatMessage = {
       id: uuid(),
       role: 'user',
-      blocks: message
-        ? [{ id: uuid(), type: 'text', content: message } as GenUIBlock]
+      blocks: userText
+        ? [{ id: uuid(), type: 'text', content: userText } as GenUIBlock]
         : [],
       timestamp: new Date().toISOString(),
     };
     await insertMessage(sessionId, userMessage);
 
-    // Determine response blocks based on phase and input
-    let responseBlocks: GenUIBlock[] = [];
-    let nextPhase = session.phase;
+    // Detect if this is a greeting (new session, no real user input)
+    const isGreeting = session.phase === 'greeting' && !body.message && !body.formResponse && !body.actionResponse && !body.criteriaResponse && !body.tagsResponse;
+
+    // Build the user content for the LLM
+    const llmUserContent = isGreeting
+      ? 'The user just opened the chat. Greet them warmly and let them know what you can help with.'
+      : userText;
+
+    // Build OpenAI messages from session history
+    const llmMessages = buildLLMMessages(session, walletAddress, llmUserContent);
+
+    // Prepare response tracking
+    const responseBlocks: GenUIBlock[] = [];
     let updatedContext = { ...session.context };
+    const textBlockId = `text-${uuid().slice(0, 8)}`;
 
-    const hasFormResponse = !!body.formResponse;
-    const hasActionResponse = !!body.actionResponse;
-    const hasCriteriaResponse = !!body.criteriaResponse;
-    const hasTagsResponse = !!body.tagsResponse;
-
-    switch (session.phase) {
-      case 'greeting': {
-        if (hasActionResponse) {
-          // User selected a vertical — set jobType directly from toolArgs
-          const jobType = (body.actionResponse!.toolArgs?.jobType as string) || 'audit';
-          updatedContext.jobType = jobType as any;
-          responseBlocks = buildClarificationBlocks(jobType);
-          nextPhase = 'clarification';
-        } else if (message) {
-          // User typed a message — infer job type
-          const toolResult = await executeButlerTool('analyze_requirements', { description: message });
-          updatedContext.jobType = (toolResult.jobType as string) as any;
-          responseBlocks = buildClarificationBlocks(updatedContext.jobType);
-          nextPhase = 'clarification';
-        } else {
-          // Show greeting
-          responseBlocks = buildGreetingBlocks();
-        }
-        break;
-      }
-
-      case 'clarification': {
-        if (hasFormResponse && body.formResponse!.formId === 'job-details') {
-          const values = body.formResponse!.values;
-
-          // Run analyze_requirements tool
-          const analysisResult = await executeButlerTool('analyze_requirements', {
-            description: values.description || '',
-          });
-          updatedContext = updateContextFromToolResult(
-            updatedContext,
-            'analyze_requirements',
-            analysisResult,
-          );
-
-          // Run cost estimation
-          const costResult = await executeButlerTool('estimate_cost', {
-            jobType: analysisResult.jobType || values.jobType,
-            complexity: analysisResult.complexity,
-          });
-
-          // Store all form values in context
-          if (values.description) {
-            updatedContext.description = values.description;
-          }
-          if (values.budget) {
-            updatedContext.budget = values.budget;
-          }
-          if (values.deadline) {
-            updatedContext.deadline = values.deadline;
-          }
-          if (values.jobType) {
-            updatedContext.jobType = values.jobType as any;
-          }
-
-          // Get criteria + tags in the same response so user can act
-          const jobType = analysisResult.jobType || values.jobType || updatedContext.jobType || 'audit';
-          const criteriaResult = await executeButlerTool('get_job_criteria', { jobType });
-          const tags = (analysisResult.suggestedTags as string[]) || [];
-
-          // Combine analysis table + criteria selection into one response
-          responseBlocks = [
-            ...buildAnalysisBlocks(analysisResult, costResult),
-            ...buildCriteriaBlocks(criteriaResult, tags),
-          ];
-          nextPhase = 'criteria_selection';
-        } else {
-          responseBlocks = buildClarificationBlocks(updatedContext.jobType);
-        }
-        break;
-      }
-
-      case 'analysis': {
-        // Fallback if session got stuck in analysis phase
-        const jobType = updatedContext.jobType || 'audit';
-        const criteriaResult = await executeButlerTool('get_job_criteria', {
-          jobType,
-        });
-
-        const analysisResult = await executeButlerTool('analyze_requirements', {
-          description: message || jobType,
-        });
-        const tags = (analysisResult.suggestedTags as string[]) || [];
-
-        responseBlocks = buildCriteriaBlocks(criteriaResult, tags);
-        nextPhase = 'criteria_selection';
-        break;
-      }
-
-      case 'criteria_selection': {
-        if (hasCriteriaResponse || hasTagsResponse || hasActionResponse) {
-          if (body.criteriaResponse) {
-            updatedContext.selectedCriteria = body.criteriaResponse.selectedIds;
-          }
-
-          // Build finalize request from accumulated context
-          const selectedTags = body.tagsResponse?.selectedTags || [];
-          const jobType = updatedContext.jobType || 'general';
-          const description = (updatedContext.slots as any)?.description
-            || (updatedContext as any).description
-            || message
-            || `${jobType} job`;
-          const budgetRaw = (updatedContext.slots as any)?.budget?.value
-            || (updatedContext as any).budget;
-          const budgetAmount = typeof budgetRaw === 'object' ? budgetRaw.amount : (parseFloat(budgetRaw) || 100);
-          const deadlineRaw = (updatedContext.slots as any)?.deadline?.value
-            || (updatedContext as any).deadline;
-          const deadlineISO = deadlineRaw
-            || new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
-
-          // Get full criteria objects for the selected IDs
-          const criteriaResult = await executeButlerTool('get_job_criteria', { jobType });
-          const allCriteria = (criteriaResult.criteria as any[]) || [];
-          const selectedIds = new Set(updatedContext.selectedCriteria || []);
-          const acceptedCriteria = allCriteria
-            .filter((c: any) => selectedIds.has(c.id))
-            .map((c: any) => ({
-              id: c.id,
-              description: c.description || c.name,
-              measurable: true,
-              source: 'llm_suggested' as const,
-              accepted: true,
-            }));
-
-          try {
-            const finalizeResult = await finalizePipeline.finalize({
-              sessionId,
-              slots: {
-                taskDescription: { value: description, provenance: 'user_explicit', confidence: 1 },
-                deliverableType: { value: jobType, provenance: 'llm_inferred', confidence: 0.8 },
-                scope: { value: { complexity: (updatedContext as any).complexity || 'moderate' }, provenance: 'llm_inferred', confidence: 0.7 },
-                deadline: { value: deadlineISO, provenance: deadlineRaw ? 'user_explicit' : 'default', confidence: deadlineRaw ? 1 : 0.5 },
-                budget: { value: { amount: budgetAmount, currency: 'USDC' }, provenance: budgetRaw ? 'user_explicit' : 'default', confidence: budgetRaw ? 1 : 0.5 },
-                acceptanceCriteria: { value: [], provenance: 'default', confidence: 0.5 },
-                requiredCapabilities: { value: [], provenance: 'default', confidence: 0.5 },
-                preferredAgentReputation: { value: 0, provenance: 'default', confidence: 0.5 },
-                context: { value: '', provenance: 'default', confidence: 0.5 },
-                exampleOutputs: { value: [], provenance: 'default', confidence: 0.5 },
-              },
-              acceptedCriteria,
-              walletAddress,
-              tags: selectedTags,
-              category: jobType,
-            });
-
-            responseBlocks = [
-              {
-                id: `text-${uuid().slice(0, 8)}`,
-                type: 'text',
-                content: `Your job is ready to post! Please sign the transaction to publish it on-chain.`,
-              } as GenUIBlock,
-              {
-                id: `tx-${uuid().slice(0, 8)}`,
-                type: 'transaction',
-                transaction: finalizeResult.transaction,
-                title: description.slice(0, 80),
-                budget: budgetAmount,
-                criteriaCount: acceptedCriteria.length,
-              } as GenUIBlock,
-            ];
-            nextPhase = 'posting';
-          } catch (err) {
-            console.error('[chat] finalize error:', err);
-            responseBlocks = [
-              {
-                id: `text-${uuid().slice(0, 8)}`,
-                type: 'text',
-                content: `There was an error preparing your transaction: ${(err as Error).message}. Please try again.`,
-              } as GenUIBlock,
-            ];
-          }
-        } else {
-          // Show criteria again
-          const jobType = updatedContext.jobType || 'audit';
-          const criteriaResult = await executeButlerTool('get_job_criteria', { jobType });
-          const tags = ((await executeButlerTool('analyze_requirements', { description: jobType })).suggestedTags as string[]) || [];
-          responseBlocks = buildCriteriaBlocks(criteriaResult, tags);
-        }
-        break;
-      }
-
-      case 'posting': {
-        // Client reports transaction result
-        if (hasActionResponse && body.actionResponse!.actionId === 'tx-confirmed') {
-          const txHash = body.actionResponse!.toolArgs?.txHash as string || '';
-          responseBlocks = [
-            {
-              id: `text-${uuid().slice(0, 8)}`,
-              type: 'text',
-              content: `Your job has been posted on-chain! Transaction: **${txHash.slice(0, 10)}...**\n\nI'll notify you when agents start bidding.`,
-            } as GenUIBlock,
-            {
-              id: `action-${uuid().slice(0, 8)}`,
-              type: 'action',
-              actions: [
-                { id: 'post-another', label: 'Post Another Job', variant: 'outline' },
-              ],
-              layout: 'horizontal',
-            } as GenUIBlock,
-          ];
-          nextPhase = 'awaiting_bids';
-        } else {
-          responseBlocks = [
-            {
-              id: `text-${uuid().slice(0, 8)}`,
-              type: 'text',
-              content: 'Please sign the transaction to post your job.',
-            } as GenUIBlock,
-          ];
-        }
-        break;
-      }
-
-      default: {
-        // For other phases, echo back a text response
-        responseBlocks = [
-          {
-            id: `text-${uuid().slice(0, 8)}`,
-            type: 'text',
-            content: `Your job is in the **${session.phase}** phase. I'm monitoring for updates and will notify you of any changes.`,
-          } as GenUIBlock,
-        ];
-        break;
-      }
-    }
-
-    // Update phase and context
-    if (nextPhase !== session.phase) {
-      await updateSessionPhase(sessionId, nextPhase);
-      sendSSE(sessionId, { type: 'phase_change', phase: nextPhase });
-    }
-    await updateSessionContext(sessionId, updatedContext);
-
-    // Store butler response
-    const butlerMessage: ChatMessage = {
-      id: uuid(),
-      role: 'butler',
-      blocks: responseBlocks,
-      timestamp: new Date().toISOString(),
-      metadata: {
-        sessionPhase: nextPhase,
-      },
-    };
-    await insertMessage(sessionId, butlerMessage);
-
-    // Send blocks via SSE
-    for (const block of responseBlocks) {
-      sendSSE(sessionId, {
-        type: 'block_start',
-        blockId: block.id,
-        blockType: block.type as any,
-      });
-      sendSSE(sessionId, {
-        type: 'block_complete',
-        blockId: block.id,
-        block,
-      });
-    }
+    // Send text block_start via SSE so mobile creates a placeholder
     sendSSE(sessionId, {
-      type: 'done',
-      messageId: butlerMessage.id,
+      type: 'block_start',
+      blockId: textBlockId,
+      blockType: 'text',
     });
 
-    // REST response
-    const chatResponse: ChatResponse = {
-      sessionId,
-      message: butlerMessage,
-      phase: nextPhase,
-    };
-    res.json(chatResponse);
+    // Store criteria/tags from structured response in context before LLM call
+    if (body.criteriaResponse) {
+      updatedContext.selectedCriteria = body.criteriaResponse.selectedIds;
+    }
+
+    // Run LLM streaming loop
+    const butlerLLM = getButlerLLM();
+
+    await new Promise<void>((resolve, reject) => {
+      butlerLLM.streamChatWithToolLoop(
+        llmMessages,
+        BUTLER_TOOL_SCHEMAS,
+        {
+          onTextDelta: (delta) => {
+            sendSSE(sessionId, {
+              type: 'block_delta',
+              blockId: textBlockId,
+              delta,
+            });
+          },
+
+          onExecuteTool: async (toolName, args) => {
+            // Inject walletAddress for get_my_jobs (LLM doesn't know the wallet)
+            if (toolName === 'get_my_jobs') {
+              args.wallet = walletAddress;
+            }
+
+            // Inject wallet for post_job
+            if (toolName === 'post_job') {
+              args.walletAddress = walletAddress;
+            }
+
+            // Inject selected criteria from the structured response
+            if (toolName === 'post_job' && updatedContext.selectedCriteria?.length) {
+              args.criteria = args.criteria || updatedContext.selectedCriteria;
+            }
+
+            const result = await executeButlerTool(toolName, args);
+
+            // Update session context
+            updatedContext = updateContextFromToolResult(
+              updatedContext,
+              toolName,
+              result,
+            );
+
+            // Store form values in context if this is analyze_requirements
+            if (toolName === 'analyze_requirements') {
+              if (body.formResponse?.values?.description) {
+                updatedContext.description = body.formResponse.values.description;
+              }
+              if (body.formResponse?.values?.budget) {
+                updatedContext.budget = body.formResponse.values.budget;
+              }
+              if (body.formResponse?.values?.deadline) {
+                updatedContext.deadline = body.formResponse.values.deadline;
+              }
+              if (result.complexity) {
+                updatedContext.complexity = result.complexity as string;
+              }
+            }
+
+            // Map tool result to GenUI blocks and send via SSE
+            const blocks = mapToolResultToBlocks(toolName, result);
+            for (const block of blocks) {
+              responseBlocks.push(block);
+              sendSSE(sessionId, {
+                type: 'block_start',
+                blockId: block.id,
+                blockType: block.type as any,
+              });
+              sendSSE(sessionId, {
+                type: 'block_complete',
+                blockId: block.id,
+                block,
+              });
+            }
+
+            return result;
+          },
+
+          onToolCallComplete: (_name, _args, _result) => {
+            // Tool result already handled in onExecuteTool
+          },
+
+          onDone: (fullText, toolsCalled) => {
+            // Complete the text block
+            const textBlock: GenUIBlock = {
+              id: textBlockId,
+              type: 'text',
+              content: fullText,
+            } as GenUIBlock;
+
+            responseBlocks.unshift(textBlock);
+
+            sendSSE(sessionId, {
+              type: 'block_complete',
+              blockId: textBlockId,
+              block: textBlock,
+            });
+
+            // For greeting, append vertical action buttons
+            if (isGreeting) {
+              const actionBlock = buildVerticalActionBlock();
+              responseBlocks.push(actionBlock);
+              sendSSE(sessionId, {
+                type: 'block_start',
+                blockId: actionBlock.id,
+                blockType: 'action',
+              });
+              sendSSE(sessionId, {
+                type: 'block_complete',
+                blockId: actionBlock.id,
+                block: actionBlock,
+              });
+            }
+
+            // Infer phase from tools called
+            const nextPhase = inferPhaseFromTools(toolsCalled, session!.phase);
+
+            // Store butler message
+            const butlerMessage: ChatMessage = {
+              id: uuid(),
+              role: 'butler',
+              blocks: responseBlocks,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                toolCalls: toolsCalled.length > 0 ? toolsCalled : undefined,
+                sessionPhase: nextPhase,
+              },
+            };
+
+            // Async operations — fire and handle
+            (async () => {
+              try {
+                await insertMessage(sessionId, butlerMessage);
+
+                if (nextPhase !== session!.phase) {
+                  await updateSessionPhase(sessionId, nextPhase);
+                  sendSSE(sessionId, { type: 'phase_change', phase: nextPhase });
+                }
+                await updateSessionContext(sessionId, updatedContext);
+
+                sendSSE(sessionId, {
+                  type: 'done',
+                  messageId: butlerMessage.id,
+                });
+
+                // REST response
+                const chatResponse: ChatResponse = {
+                  sessionId,
+                  message: butlerMessage,
+                  phase: nextPhase,
+                };
+                res.json(chatResponse);
+                resolve();
+              } catch (err) {
+                reject(err);
+              }
+            })();
+          },
+
+          onError: (error) => {
+            console.error('[chat] LLM error:', error);
+            sendSSE(sessionId, {
+              type: 'error',
+              message: error.message,
+              code: 'llm_error',
+            });
+
+            // Send error as text block
+            const errorBlock: GenUIBlock = {
+              id: textBlockId,
+              type: 'text',
+              content: `I'm having trouble processing your request. Please try again.`,
+            } as GenUIBlock;
+
+            sendSSE(sessionId, {
+              type: 'block_complete',
+              blockId: textBlockId,
+              block: errorBlock,
+            });
+            sendSSE(sessionId, {
+              type: 'done',
+              messageId: uuid(),
+            });
+
+            const errorMessage: ChatMessage = {
+              id: uuid(),
+              role: 'butler',
+              blocks: [errorBlock],
+              timestamp: new Date().toISOString(),
+            };
+
+            insertMessage(sessionId, errorMessage).catch(() => {});
+
+            res.json({
+              sessionId,
+              message: errorMessage,
+              phase: session!.phase,
+            } as ChatResponse);
+            resolve();
+          },
+        },
+      ).catch(reject);
+    });
   } catch (err) {
     console.error('[chat] message error:', err);
     res.status(500).json({
@@ -638,7 +521,6 @@ router.get('/:sessionId/stream', (req: Request, res: Response) => {
 // ────────────────────────────────────────────────────────────
 
 router.get('/sessions', optionalAuth, async (req: Request, res: Response) => {
-  // Use authenticated wallet if available, fall back to query param
   const wallet = req.walletAddress || (req.query.wallet as string);
 
   try {
@@ -664,7 +546,6 @@ router.get('/:sessionId', optionalAuth, async (req: Request, res: Response) => {
       return;
     }
 
-    // If authenticated, verify session ownership
     if (req.walletAddress && session.walletAddress.toLowerCase() !== req.walletAddress) {
       res.status(403).json({ error: 'Forbidden' });
       return;

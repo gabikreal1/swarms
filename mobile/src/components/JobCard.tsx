@@ -4,7 +4,8 @@ import { useTheme } from '../theme/useTheme';
 
 interface JobCardProps {
   job: {
-    id: number;
+    id: string;
+    chainId?: number | null;
     title: string;
     status: string;
     budget: string;

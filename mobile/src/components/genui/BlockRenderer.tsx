@@ -14,6 +14,7 @@ interface BlockRendererProps {
     type: string;
     [key: string]: any;
   };
+  isStreaming?: boolean;
   onAction: (actionId: string, toolCall?: string, toolArgs?: Record<string, unknown>) => void;
   onFormSubmit: (formId: string, values: Record<string, string>) => void;
   onCriteriaChange: (selectedIds: string[], customCriteria?: string[]) => void;
@@ -22,6 +23,7 @@ interface BlockRendererProps {
 
 export default function BlockRenderer({
   block,
+  isStreaming,
   onAction,
   onFormSubmit,
   onCriteriaChange,
@@ -29,7 +31,7 @@ export default function BlockRenderer({
 }: BlockRendererProps) {
   switch (block.type) {
     case 'text':
-      return <TextBlock content={block.content || ''} />;
+      return <TextBlock content={block.content || ''} isStreaming={isStreaming} />;
 
     case 'action':
       return (
@@ -89,7 +91,7 @@ export default function BlockRenderer({
     default:
       // Fallback: render as text if there's content, otherwise skip
       if (block.content) {
-        return <TextBlock content={block.content} />;
+        return <TextBlock content={block.content} isStreaming={isStreaming} />;
       }
       return null;
   }

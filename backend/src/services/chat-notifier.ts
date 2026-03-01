@@ -41,9 +41,11 @@ async function notifyChatSession(
 ): Promise<void> {
   try {
     const pool = getPool();
-    // Find chat sessions that have this jobId in their context
+    // Find chat sessions that have this jobId (UUID) or chainJobId (number) in their context
     const { rows } = await pool.query(
-      `SELECT session_id FROM chat_sessions WHERE context->>'jobId' = $1`,
+      `SELECT session_id FROM chat_sessions
+       WHERE context->>'jobId' = $1
+          OR context->>'chainJobId' = $1`,
       [String(jobId)],
     );
 

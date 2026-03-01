@@ -1,7 +1,6 @@
-// Local wallet — generates a keypair on-device, persisted in AsyncStorage.
+// Local wallet — generates a keypair on-device, persisted in SecureStore.
 // Works in Expo Go without native modules.
 
-import { USE_MOCKS, mockDelay, MOCK_WALLET } from '../config/mock';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -22,11 +21,6 @@ export interface WalletState {
 const STORAGE_KEY = 'swarms_wallet_pk';
 
 export async function initWallet(): Promise<WalletState> {
-  if (USE_MOCKS) {
-    await mockDelay();
-    return MOCK_WALLET;
-  }
-
   let pk = await SecureStore.getItemAsync(STORAGE_KEY);
 
   if (!pk) {
@@ -56,15 +50,8 @@ export async function signAndSendTransaction(tx: {
   data: string;
   value: string;
 }) {
-  if (USE_MOCKS) {
-    await mockDelay();
-    return '0xmock_tx_hash_' + Date.now().toString(16);
-  }
-
   const account = await getAccount();
 
-  // For now, return signed message hash as proof.
-  // In production, use a bundler or send via RPC.
   const { createWalletClient, http } = await import('viem');
   const { arcTestnet } = await import('../config/chains');
 
@@ -87,11 +74,6 @@ export async function checkAllowance(
   owner: `0x${string}`,
   spender: `0x${string}`,
 ): Promise<bigint> {
-  if (USE_MOCKS) {
-    await mockDelay();
-    return 0n;
-  }
-
   const { createPublicClient, http, erc20Abi } = await import('viem');
   const { arcTestnet, USDC_ADDRESS } = await import('../config/chains');
 
@@ -114,11 +96,6 @@ export async function approveUSDC(
   spender: `0x${string}`,
   amount: bigint,
 ): Promise<string> {
-  if (USE_MOCKS) {
-    await mockDelay();
-    return '0xmock_approve_hash_' + Date.now().toString(16);
-  }
-
   const account = await getAccount();
   const { createWalletClient, http, encodeFunctionData, erc20Abi } = await import('viem');
   const { arcTestnet, USDC_ADDRESS } = await import('../config/chains');
@@ -148,11 +125,6 @@ export async function waitForReceipt(
   txHash: `0x${string}`,
   timeoutMs: number = 30000,
 ): Promise<{ status: 'success' | 'reverted'; transactionHash: string }> {
-  if (USE_MOCKS) {
-    await mockDelay();
-    return { status: 'success', transactionHash: txHash };
-  }
-
   const { createPublicClient, http } = await import('viem');
   const { arcTestnet } = await import('../config/chains');
 

@@ -14,7 +14,8 @@ function db(): Pool {
 // ────────────────────────────────────────────────────────────
 
 export interface InsertJobParams {
-  id: bigint;
+  id?: string;           // UUID — omit to auto-generate
+  chainId?: bigint;      // on-chain uint256 jobId (NULL for seed data)
   poster: string;
   description: string;
   metadataUri: string;
@@ -24,38 +25,113 @@ export interface InsertJobParams {
   txHash: string;
 }
 
-export async function insertJob(p: InsertJobParams): Promise<void> {
-  await db().query(
-    `INSERT INTO jobs (id, poster, description, metadata_uri, tags, deadline, status, block_number, tx_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)
-     ON CONFLICT (id) DO UPDATE SET
-       description = EXCLUDED.description,
-       metadata_uri = EXCLUDED.metadata_uri,
-       tags = EXCLUDED.tags,
-       deadline = EXCLUDED.deadline,
-       updated_at = NOW()`,
-    [
-      p.id.toString(),
-      p.poster,
-      p.description,
-      p.metadataUri,
-      p.tags,
-      p.deadline.toString(),
-      p.blockNumber.toString(),
-      p.txHash,
-    ],
+export async function insertJob(p: InsertJobParams): Promise<string> {
+  if (p.chainId != null) {
+    // Chain data: upsert on chain_id
+    const res = await db().query(
+      `INSERT INTO jobs (chain_id, poster, description, metadata_uri, tags, deadline, status, block_number, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)
+       ON CONFLICT (chain_id) DO UPDATE SET
+         description = EXCLUDED.description,
+         metadata_uri = EXCLUDED.metadata_uri,
+         tags = EXCLUDED.tags,
+         deadline = EXCLUDED.deadline,
+         updated_at = NOW()
+       RETURNING id`,
+      [
+        p.chainId.toString(),
+        p.poster,
+        p.description,
+        p.metadataUri,
+        p.tags,
+        p.deadline.toString(),
+        p.blockNumber.toString(),
+        p.txHash,
+      ],
+    );
+    return res.rows[0].id;
+  }
+
+  // Seed data: insert with optional explicit UUID, no chain_id
+  const id = p.id ?? undefined;
+  const res = await db().query(
+    id
+      ? `INSERT INTO jobs (id, poster, description, metadata_uri, tags, deadline, status, block_number, tx_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           description = EXCLUDED.description,
+           metadata_uri = EXCLUDED.metadata_uri,
+           tags = EXCLUDED.tags,
+           deadline = EXCLUDED.deadline,
+           updated_at = NOW()
+         RETURNING id`
+      : `INSERT INTO jobs (poster, description, metadata_uri, tags, deadline, status, block_number, tx_hash)
+         VALUES ($1, $2, $3, $4, $5, 'open', $6, $7)
+         RETURNING id`,
+    id
+      ? [id, p.poster, p.description, p.metadataUri, p.tags, p.deadline.toString(), p.blockNumber.toString(), p.txHash]
+      : [p.poster, p.description, p.metadataUri, p.tags, p.deadline.toString(), p.blockNumber.toString(), p.txHash],
   );
+  return res.rows[0].id;
 }
 
 export async function updateJobStatus(
-  jobId: bigint,
+  jobId: string,
   status: string,
 ): Promise<void> {
   const extra =
     status === "completed" ? ", completed_at = NOW()" : "";
   await db().query(
     `UPDATE jobs SET status = $1, updated_at = NOW()${extra} WHERE id = $2`,
-    [status, jobId.toString()],
+    [status, jobId],
+  );
+}
+
+// ── Chain ID lookup helpers ──────────────────────────────────
+
+export async function getJobUuidByChainId(chainId: bigint): Promise<string | null> {
+  const res = await db().query(
+    `SELECT id FROM jobs WHERE chain_id = $1`,
+    [chainId.toString()],
+  );
+  return res.rows[0]?.id ?? null;
+}
+
+export async function getBidUuidByChainId(chainId: bigint): Promise<string | null> {
+  const res = await db().query(
+    `SELECT id FROM bids WHERE chain_id = $1`,
+    [chainId.toString()],
+  );
+  return res.rows[0]?.id ?? null;
+}
+
+export async function getDisputeUuidByChainId(chainId: bigint): Promise<string | null> {
+  const res = await db().query(
+    `SELECT id FROM disputes WHERE chain_id = $1`,
+    [chainId.toString()],
+  );
+  return res.rows[0]?.id ?? null;
+}
+
+export async function updateJobStatusByChainId(
+  chainId: bigint,
+  status: string,
+): Promise<void> {
+  const extra =
+    status === "completed" ? ", completed_at = NOW()" : "";
+  await db().query(
+    `UPDATE jobs SET status = $1, updated_at = NOW()${extra} WHERE chain_id = $2`,
+    [status, chainId.toString()],
+  );
+}
+
+export async function markBidAcceptedByChainId(
+  chainBidId: bigint,
+  responseUri: string,
+): Promise<void> {
+  await db().query(
+    `UPDATE bids SET accepted = TRUE, response_uri = $2 WHERE chain_id = $1`,
+    [chainBidId.toString(), responseUri],
   );
 }
 
@@ -64,8 +140,9 @@ export async function updateJobStatus(
 // ────────────────────────────────────────────────────────────
 
 export interface InsertBidParams {
-  id: bigint;
-  jobId: bigint;
+  id?: string;           // UUID — omit to auto-generate
+  chainId?: bigint;      // on-chain uint256 bidId
+  jobId: string;         // UUID of the parent job
   bidder: string;
   price: bigint;
   deliveryTime: bigint;
@@ -75,32 +152,54 @@ export interface InsertBidParams {
   txHash: string;
 }
 
-export async function insertBid(p: InsertBidParams): Promise<void> {
-  await db().query(
-    `INSERT INTO bids (id, job_id, bidder, price, delivery_time, reputation, metadata_uri, block_number, tx_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT (id) DO NOTHING`,
-    [
-      p.id.toString(),
-      p.jobId.toString(),
-      p.bidder,
-      p.price.toString(),
-      p.deliveryTime.toString(),
-      p.reputation.toString(),
-      p.metadataUri,
-      p.blockNumber.toString(),
-      p.txHash,
-    ],
+export async function insertBid(p: InsertBidParams): Promise<string> {
+  if (p.chainId != null) {
+    // Chain data: upsert on chain_id
+    const res = await db().query(
+      `INSERT INTO bids (chain_id, job_id, bidder, price, delivery_time, reputation, metadata_uri, block_number, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (chain_id) DO NOTHING
+       RETURNING id`,
+      [
+        p.chainId.toString(),
+        p.jobId,
+        p.bidder,
+        p.price.toString(),
+        p.deliveryTime.toString(),
+        p.reputation.toString(),
+        p.metadataUri,
+        p.blockNumber.toString(),
+        p.txHash,
+      ],
+    );
+    return res.rows[0]?.id ?? (await getBidUuidByChainId(p.chainId))!;
+  }
+
+  // Seed data
+  const id = p.id ?? undefined;
+  const res = await db().query(
+    id
+      ? `INSERT INTO bids (id, job_id, bidder, price, delivery_time, reputation, metadata_uri, block_number, tx_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`
+      : `INSERT INTO bids (job_id, bidder, price, delivery_time, reputation, metadata_uri, block_number, tx_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+    id
+      ? [id, p.jobId, p.bidder, p.price.toString(), p.deliveryTime.toString(), p.reputation.toString(), p.metadataUri, p.blockNumber.toString(), p.txHash]
+      : [p.jobId, p.bidder, p.price.toString(), p.deliveryTime.toString(), p.reputation.toString(), p.metadataUri, p.blockNumber.toString(), p.txHash],
   );
+  return res.rows[0]?.id ?? id!;
 }
 
 export async function markBidAccepted(
-  bidId: bigint,
+  bidId: string,
   responseUri: string,
 ): Promise<void> {
   await db().query(
     `UPDATE bids SET accepted = TRUE, response_uri = $2 WHERE id = $1`,
-    [bidId.toString(), responseUri],
+    [bidId, responseUri],
   );
 }
 
@@ -160,38 +259,70 @@ export async function updateAgentReputation(
 // ────────────────────────────────────────────────────────────
 
 export interface InsertDisputeParams {
-  id: bigint;
-  jobId: bigint;
+  id?: string;           // UUID — omit to auto-generate
+  chainId?: bigint;      // on-chain uint256 disputeId
+  jobId: string;         // UUID of the parent job
   initiator: string;
   reason: string;
   blockNumber: bigint;
   txHash: string;
 }
 
-export async function insertDispute(p: InsertDisputeParams): Promise<void> {
-  await db().query(
-    `INSERT INTO disputes (id, job_id, initiator, reason, block_number, tx_hash)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (id) DO NOTHING`,
-    [
-      p.id.toString(),
-      p.jobId.toString(),
-      p.initiator,
-      p.reason,
-      p.blockNumber.toString(),
-      p.txHash,
-    ],
+export async function insertDispute(p: InsertDisputeParams): Promise<string> {
+  if (p.chainId != null) {
+    const res = await db().query(
+      `INSERT INTO disputes (chain_id, job_id, initiator, reason, block_number, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (chain_id) DO NOTHING
+       RETURNING id`,
+      [
+        p.chainId.toString(),
+        p.jobId,
+        p.initiator,
+        p.reason,
+        p.blockNumber.toString(),
+        p.txHash,
+      ],
+    );
+    return res.rows[0]?.id ?? (await getDisputeUuidByChainId(p.chainId))!;
+  }
+
+  const id = p.id ?? undefined;
+  const res = await db().query(
+    id
+      ? `INSERT INTO disputes (id, job_id, initiator, reason, block_number, tx_hash)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`
+      : `INSERT INTO disputes (job_id, initiator, reason, block_number, tx_hash)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id`,
+    id
+      ? [id, p.jobId, p.initiator, p.reason, p.blockNumber.toString(), p.txHash]
+      : [p.jobId, p.initiator, p.reason, p.blockNumber.toString(), p.txHash],
   );
+  return res.rows[0]?.id ?? id!;
 }
 
 export async function updateDisputeStatus(
-  disputeId: bigint,
+  disputeId: string,
   status: string,
   resolutionMessage: string,
 ): Promise<void> {
   await db().query(
     `UPDATE disputes SET status = $2, resolution_message = $3, resolved_at = NOW() WHERE id = $1`,
-    [disputeId.toString(), status, resolutionMessage],
+    [disputeId, status, resolutionMessage],
+  );
+}
+
+export async function updateDisputeStatusByChainId(
+  chainDisputeId: bigint,
+  status: string,
+  resolutionMessage: string,
+): Promise<void> {
+  await db().query(
+    `UPDATE disputes SET status = $2, resolution_message = $3, resolved_at = NOW() WHERE chain_id = $1`,
+    [chainDisputeId.toString(), status, resolutionMessage],
   );
 }
 
@@ -234,8 +365,8 @@ export async function insertReputationEvent(
 // ────────────────────────────────────────────────────────────
 
 export async function insertDelivery(
-  jobId: bigint,
-  bidId: bigint,
+  jobId: string,
+  bidId: string,
   proofHash: string,
   blockNumber: bigint,
   txHash: string,
@@ -245,7 +376,7 @@ export async function insertDelivery(
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (job_id) DO UPDATE SET
        proof_hash = EXCLUDED.proof_hash`,
-    [jobId.toString(), bidId.toString(), proofHash, blockNumber.toString(), txHash],
+    [jobId, bidId, proofHash, blockNumber.toString(), txHash],
   );
 }
 
@@ -254,7 +385,7 @@ export async function insertDelivery(
 // ────────────────────────────────────────────────────────────
 
 export async function insertEscrow(
-  jobId: bigint,
+  jobId: string,
   poster: string,
   agent: string,
   amount: bigint,
@@ -265,7 +396,7 @@ export async function insertEscrow(
     `INSERT INTO escrows (job_id, poster, agent, amount, block_number, tx_hash)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (job_id) DO NOTHING`,
-    [jobId.toString(), poster, agent, amount.toString(), blockNumber.toString(), txHash],
+    [jobId, poster, agent, amount.toString(), blockNumber.toString(), txHash],
   );
 }
 

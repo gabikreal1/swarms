@@ -1,10 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { FeedService, FeedFilters, SearchFilters } from '../services/feed';
 import { ChainReader } from '../services/chain-reader';
+import { getPool } from '../db/pool';
 
 const router = Router();
 const feedService = new FeedService();
 const chainReader = new ChainReader();
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ────────────────────────────────────────────────────────────
 // GET /v1/feed/jobs
@@ -167,12 +170,77 @@ router.get('/jobs/recommended', async (req: Request, res: Response) => {
 
 router.get('/jobs/:id', async (req: Request, res: Response) => {
   try {
-    const id = Number(req.params.id);
-    if (Number.isNaN(id)) {
-      res.status(400).json({ error: 'id must be a number' });
+    const idParam = req.params.id as string;
+
+    if (UUID_RE.test(idParam)) {
+      // Lookup by UUID in DB
+      const pool = getPool();
+      const result = await pool.query(
+        `SELECT j.*, COALESCE((SELECT COUNT(*)::int FROM bids b WHERE b.job_id = j.id), 0) AS bid_count
+         FROM jobs j WHERE j.id = $1`,
+        [idParam],
+      );
+      if (result.rows.length > 0) {
+        const r = result.rows[0];
+        res.json({
+          data: {
+            id: r.id,
+            chainId: r.chain_id ? Number(r.chain_id) : null,
+            poster: r.poster,
+            description: r.description,
+            metadataUri: r.metadata_uri,
+            tags: r.tags ?? [],
+            category: r.category ?? '',
+            deadline: Number(r.deadline ?? 0),
+            budget: Number(r.budget ?? 0),
+            status: r.status,
+            createdAt: r.created_at?.toISOString?.() ?? r.created_at,
+            bidCount: r.bid_count,
+          },
+        });
+        return;
+      }
+      res.status(404).json({ error: 'Job not found' });
       return;
     }
-    const job = await chainReader.getJob(id);
+
+    // Numeric: look up by chain_id in DB, fall back to chain reader
+    const numericId = Number(idParam);
+    if (Number.isNaN(numericId)) {
+      res.status(400).json({ error: 'id must be a UUID or number' });
+      return;
+    }
+
+    // Try DB by chain_id first
+    const pool = getPool();
+    const dbResult = await pool.query(
+      `SELECT j.*, COALESCE((SELECT COUNT(*)::int FROM bids b WHERE b.job_id = j.id), 0) AS bid_count
+       FROM jobs j WHERE j.chain_id = $1`,
+      [numericId],
+    );
+    if (dbResult.rows.length > 0) {
+      const r = dbResult.rows[0];
+      res.json({
+        data: {
+          id: r.id,
+          chainId: Number(r.chain_id),
+          poster: r.poster,
+          description: r.description,
+          metadataUri: r.metadata_uri,
+          tags: r.tags ?? [],
+          category: r.category ?? '',
+          deadline: Number(r.deadline ?? 0),
+          budget: Number(r.budget ?? 0),
+          status: r.status,
+          createdAt: r.created_at?.toISOString?.() ?? r.created_at,
+          bidCount: r.bid_count,
+        },
+      });
+      return;
+    }
+
+    // Fall back to chain reader
+    const job = await chainReader.getJob(numericId);
     if (!job) {
       res.status(404).json({ error: 'Job not found' });
       return;

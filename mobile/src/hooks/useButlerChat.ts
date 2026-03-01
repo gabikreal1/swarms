@@ -1,11 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Alert, FlatList } from 'react-native';
-import {
-  USE_MOCKS,
-  GREETING_BLOCKS,
-  CLARIFICATION_BLOCKS,
-  ANALYSIS_BLOCKS,
-} from '../config/mock';
 import { api, API_BASE } from '../api/client';
 import { initWallet } from '../wallet/circle';
 
@@ -38,20 +32,12 @@ export const PHASE_LABELS: Record<string, string> = {
   status_inquiry: 'Checking status',
 };
 
-const MOCK_AGENT_REPLIES = [
-  "I'm working on that right now. Give me a moment to analyze the contract.",
-  'Good question. Based on my analysis, the approve function lacks input validation for the zero address.',
-  "I've found a potential reentrancy vector in the withdrawal flow. I'll include remediation steps in my report.",
-  "The gas benchmarks are looking promising — I'm seeing a 34% reduction so far on the mint function.",
-  "I've completed this section. Moving on to the next set of tests now.",
-  "Here's what I recommend: add a nonReentrant modifier and emit events on all state changes.",
-];
-
 export function useButlerChat(chatId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [agentTyping, setAgentTyping] = useState(false);
+  const [streamingBlockIds, setStreamingBlockIds] = useState<Set<string>>(new Set());
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [phase, setPhase] = useState<string>('greeting');
@@ -59,7 +45,6 @@ export function useButlerChat(chatId: string | null) {
   const [walletReady, setWalletReady] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
   const flatListRef = useRef<FlatList>(null);
-  const mockReplyIndex = useRef(0);
   const eventSourceRef = useRef<any>(null);
   const retryCountRef = useRef(0);
   const initialFetchDone = useRef(false);
@@ -97,29 +82,11 @@ export function useButlerChat(chatId: string | null) {
   }, []);
 
   useEffect(() => {
-    if (!USE_MOCKS) {
-      tryInitWallet();
-    } else {
-      setWalletReady(true);
-    }
+    tryInitWallet();
   }, [tryInitWallet]);
 
   // Load initial data — waits for walletAddress before calling the API
   useEffect(() => {
-    if (USE_MOCKS) {
-      setMessages([
-        {
-          id: 'greeting-mock',
-          role: 'butler',
-          text: '',
-          timestamp: Date.now(),
-          blocks: GREETING_BLOCKS as GenUIBlock[],
-        },
-      ]);
-      setPhase('greeting');
-      return;
-    }
-
     // Wait for wallet before making API calls
     if (!walletAddress) return;
 
@@ -137,7 +104,7 @@ export function useButlerChat(chatId: string | null) {
 
   // Connect SSE when sessionId is available
   useEffect(() => {
-    if (USE_MOCKS || !sessionId) return;
+    if (!sessionId) return;
 
     connectSSE(sessionId);
     return () => {
@@ -190,6 +157,29 @@ export function useButlerChat(chatId: string | null) {
 
             case 'block_start':
               setAgentTyping(true);
+              if (data.blockType === 'text') {
+                setStreamingBlockIds(prev => new Set(prev).add(data.blockId));
+                setMessages(prev => {
+                  const last = prev[prev.length - 1];
+                  if (last && last.role === 'butler') {
+                    const blocks = last.blocks || [];
+                    return [
+                      ...prev.slice(0, -1),
+                      { ...last, blocks: [...blocks, { id: data.blockId, type: 'text', content: '' }] },
+                    ];
+                  }
+                  return [
+                    ...prev,
+                    {
+                      id: `butler-${Date.now()}`,
+                      role: 'butler' as const,
+                      text: '',
+                      timestamp: Date.now(),
+                      blocks: [{ id: data.blockId, type: 'text', content: '' }],
+                    },
+                  ];
+                });
+              }
               break;
 
             case 'block_delta':
@@ -218,6 +208,11 @@ export function useButlerChat(chatId: string | null) {
               break;
 
             case 'block_complete':
+              setStreamingBlockIds(prev => {
+                const next = new Set(prev);
+                next.delete(data.blockId);
+                return next;
+              });
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
                 if (last && last.role === 'butler') {
@@ -306,18 +301,12 @@ export function useButlerChat(chatId: string | null) {
     };
     tagsResponse?: { selectedTags: string[] };
   }) => {
-    if (!walletAddress && !USE_MOCKS) {
+    if (!walletAddress) {
       Alert.alert('Wallet Not Ready', 'Please wait for the wallet to connect before sending messages.');
       return;
     }
 
     setAgentTyping(true);
-
-    if (USE_MOCKS) {
-      await mockButlerResponse(payload);
-      setAgentTyping(false);
-      return;
-    }
 
     try {
       const result = await api.chatMessage({
@@ -359,52 +348,6 @@ export function useButlerChat(chatId: string | null) {
     } finally {
       setAgentTyping(false);
     }
-  };
-
-  const mockButlerResponse = async (payload: any) => {
-    await new Promise((r) => setTimeout(r, 600 + Math.random() * 400));
-
-    if (payload.actionResponse) {
-      setPhase('clarification');
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `butler-${Date.now()}`,
-          role: 'butler',
-          text: '',
-          timestamp: Date.now(),
-          blocks: CLARIFICATION_BLOCKS as GenUIBlock[],
-        },
-      ]);
-    } else if (payload.formResponse) {
-      setPhase('analysis');
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `butler-${Date.now()}`,
-          role: 'butler',
-          text: '',
-          timestamp: Date.now(),
-          blocks: ANALYSIS_BLOCKS as GenUIBlock[],
-        },
-      ]);
-    } else if (payload.message) {
-      const reply =
-        MOCK_AGENT_REPLIES[
-          mockReplyIndex.current % MOCK_AGENT_REPLIES.length
-        ];
-      mockReplyIndex.current++;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `butler-${Date.now()}`,
-          role: 'butler',
-          text: reply,
-          timestamp: Date.now(),
-        },
-      ]);
-    }
-    scrollToEnd();
   };
 
   const handleAction = (
@@ -505,5 +448,6 @@ export function useButlerChat(chatId: string | null) {
     handleFormSubmit,
     handleCriteriaChange,
     handleTagsChange,
+    streamingBlockIds,
   };
 }

@@ -40,7 +40,7 @@ export async function seedVectors(
       : undefined;
 
     const payload: CompletedJobPayload = {
-      jobId: Number(job.id),
+      jobId: job.id,
       title: job.title,
       description: job.description,
       tags: job.tags,

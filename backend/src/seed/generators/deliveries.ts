@@ -18,7 +18,7 @@ const HAS_DELIVERED: Set<string> = new Set([
 
 export async function seedDeliveriesAndEscrows(
   jobs: SeededJob[],
-  bidsByJob: Map<bigint, SeededBid[]>,
+  bidsByJob: Map<string, SeededBid[]>,
   genesisDate: Date,
 ): Promise<void> {
   let deliveryCount = 0;
@@ -50,7 +50,7 @@ export async function seedDeliveriesAndEscrows(
         const fee = acceptedBid.price - payout; // 5% fee
         await pool.query(
           `UPDATE escrows SET released = TRUE, payout = $2, fee = $3 WHERE job_id = $1`,
-          [job.id.toString(), payout.toString(), fee.toString()],
+          [job.id, payout.toString(), fee.toString()],
         );
       }
 
@@ -58,7 +58,7 @@ export async function seedDeliveriesAndEscrows(
       if (job.status === 'disputed' && Math.random() < 0.3) {
         await pool.query(
           `UPDATE escrows SET refunded = TRUE WHERE job_id = $1`,
-          [job.id.toString()],
+          [job.id],
         );
       }
 
@@ -81,7 +81,7 @@ export async function seedDeliveriesAndEscrows(
       // Backdate the delivered_at timestamp
       await pool.query(
         `UPDATE deliveries SET delivered_at = $2 WHERE job_id = $1`,
-        [job.id.toString(), deliveryDate.toISOString()],
+        [job.id, deliveryDate.toISOString()],
       );
 
       deliveryCount++;

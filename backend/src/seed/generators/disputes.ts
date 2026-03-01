@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { insertDispute, updateDisputeStatus } from '../../db/queries';
 import {
   fakeTxHash, timestampToBlock, addHours, pick,
@@ -10,11 +11,12 @@ export async function seedDisputes(
   genesisDate: Date,
 ): Promise<void> {
   const disputedJobs = jobs.filter((j) => j.status === 'disputed');
-  let disputeId = 1n;
 
   for (const job of disputedJobs) {
     const disputeDate = addHours(job.createdAt, 72, 336); // 3-14 days after creation
     const blockNumber = timestampToBlock(disputeDate, genesisDate);
+
+    const disputeId = randomUUID();
 
     await insertDispute({
       id: disputeId,
@@ -41,8 +43,6 @@ export async function seedDisputes(
       );
     }
     // else: leave as 'pending' (~30%)
-
-    disputeId++;
   }
 
   console.log(`  [disputes] seeded ${disputedJobs.length} disputes`);

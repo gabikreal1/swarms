@@ -1,8 +1,49 @@
 import { CriteriaCategory, getCriteriaForJobType } from '../validator/owasp-criteria';
 import { FinalizePipeline } from '../pipeline/finalize';
 import { SuccessCriterion } from '../types/job-slots';
+import { getPool } from '../db/pool';
+import { ethers } from 'ethers';
+import { config } from '../config';
 
 const finalizePipeline = new FinalizePipeline();
+
+// ABI fragments for on-chain interactions
+const ACCEPT_BID_ABI = ['function acceptBid(uint256 jobId, uint256 bidId)'];
+const APPROVE_JOB_ABI = ['function approveJob(uint256 jobId)'];
+
+const acceptBidIface = new ethers.Interface(ACCEPT_BID_ABI);
+const approveJobIface = new ethers.Interface(APPROVE_JOB_ABI);
+
+/**
+ * Converts relative deadlines ("2 days", "1 week") and natural dates
+ * ("March 15") into ISO 8601 strings. Falls back to default (14 days).
+ */
+function parseDeadlineToISO(raw: string | undefined): string {
+  if (!raw) return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+
+  // Already a valid ISO date?
+  const directParse = new Date(raw);
+  if (!isNaN(directParse.getTime()) && raw.length > 6) {
+    return directParse.toISOString();
+  }
+
+  // Relative: "2 days", "3 weeks", "1 month"
+  const relMatch = raw.match(/^(\d+)\s*(day|days|week|weeks|month|months|hour|hours)$/i);
+  if (relMatch) {
+    const n = parseInt(relMatch[1], 10);
+    const unit = relMatch[2].toLowerCase().replace(/s$/, '');
+    const ms: Record<string, number> = {
+      hour: 3600 * 1000,
+      day: 24 * 3600 * 1000,
+      week: 7 * 24 * 3600 * 1000,
+      month: 30 * 24 * 3600 * 1000,
+    };
+    return new Date(Date.now() + n * (ms[unit] || ms.day)).toISOString();
+  }
+
+  // Fallback
+  return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+}
 
 export interface ButlerTool {
   name: string;
@@ -182,6 +223,89 @@ export async function executeButlerTool(
         metadataURI: result.metadataURI,
         transaction: result.transaction,
         useCriteria: result.useCriteria,
+      };
+    }
+
+    case 'get_my_jobs': {
+      const wallet = args.wallet as string;
+      const status = args.status as string | undefined;
+      const pool = getPool();
+      let query = `SELECT j.id, j.chain_id, j.description, j.status, j.budget, j.category, j.tags, j.deadline, j.created_at, COUNT(b.id)::int as bid_count FROM jobs j LEFT JOIN bids b ON b.job_id = j.id WHERE LOWER(j.poster) = LOWER($1)`;
+      const params: unknown[] = [wallet];
+      if (status) {
+        query += ` AND j.status = $2`;
+        params.push(status);
+      }
+      query += ` GROUP BY j.id ORDER BY j.created_at DESC LIMIT 20`;
+      const { rows } = await pool.query(query, params);
+      return { jobs: rows };
+    }
+
+    case 'get_job_bids': {
+      const jobId = args.jobId as string;
+      const pool = getPool();
+      const { rows } = await pool.query(
+        `SELECT b.id, b.chain_id, b.bidder, b.price, b.delivery_time, b.reputation, b.accepted, b.metadata_uri, a.name as agent_name FROM bids b LEFT JOIN agents a ON LOWER(a.wallet) = LOWER(b.bidder) WHERE b.job_id = $1 ORDER BY b.price ASC`,
+        [jobId],
+      );
+      return { jobId, bids: rows };
+    }
+
+    case 'accept_bid': {
+      const jobId = args.jobId as string;
+      const bidId = args.bidId as string;
+      const pool = getPool();
+      const jobRow = await pool.query(`SELECT chain_id FROM jobs WHERE id = $1`, [jobId]);
+      const bidRow = await pool.query(`SELECT chain_id FROM bids WHERE id = $1`, [bidId]);
+      const chainJobId = jobRow.rows[0]?.chain_id;
+      const chainBidId = bidRow.rows[0]?.chain_id;
+      if (!chainJobId || !chainBidId) {
+        return { error: 'Could not find on-chain IDs for job or bid' };
+      }
+      const data = acceptBidIface.encodeFunctionData('acceptBid', [chainJobId, chainBidId]);
+      return {
+        bidId,
+        transaction: {
+          to: config.orderBookAddress,
+          data,
+          value: '0',
+          chainId: config.chainId,
+        },
+      };
+    }
+
+    case 'get_delivery_status': {
+      const jobId = args.jobId as string;
+      const pool = getPool();
+      const { rows } = await pool.query(
+        `SELECT j.id, j.status, j.description, d.proof_hash, d.created_at as delivered_at FROM jobs j LEFT JOIN deliveries d ON d.job_id = j.id WHERE j.id = $1`,
+        [jobId],
+      );
+      if (rows.length === 0) return { error: 'Job not found' };
+      return rows[0];
+    }
+
+    case 'approve_delivery': {
+      const jobId = args.jobId as string;
+      const pool = getPool();
+      const { rows } = await pool.query(`SELECT chain_id, status FROM jobs WHERE id = $1`, [jobId]);
+      if (rows.length === 0) return { error: 'Job not found' };
+      const job = rows[0];
+      if (job.status !== 'delivered') {
+        return { error: `Cannot approve: job status is '${job.status}', expected 'delivered'` };
+      }
+      if (!job.chain_id) {
+        return { error: 'No on-chain ID for this job' };
+      }
+      const data = approveJobIface.encodeFunctionData('approveJob', [job.chain_id]);
+      return {
+        jobId,
+        transaction: {
+          to: config.orderBookAddress,
+          data,
+          value: '0',
+          chainId: config.chainId,
+        },
       };
     }
 

@@ -207,7 +207,7 @@ export class EventHub extends EventEmitter {
     this.emit('job.posted', event);
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       ['job.posted', Number(jobId), JSON.stringify(event.data)],
     );
   }
@@ -233,7 +233,7 @@ export class EventHub extends EventEmitter {
     this.emit('job.bid_placed', event);
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       ['job.bid_placed', Number(jobId), JSON.stringify(event.data)],
     );
   }
@@ -260,12 +260,12 @@ export class EventHub extends EventEmitter {
 
     // Update job status in PostgreSQL
     await this.materialize(
-      `UPDATE jobs SET status = 'in_progress', updated_at = NOW() WHERE id = $1`,
+      `UPDATE jobs SET status = 'in_progress', updated_at = NOW() WHERE chain_id = $1`,
       [Number(jobId)],
     );
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       ['job.bid_accepted', Number(jobId), JSON.stringify(event.data)],
     );
   }
@@ -289,12 +289,12 @@ export class EventHub extends EventEmitter {
     this.emit('job.delivery_submitted', event);
 
     await this.materialize(
-      `UPDATE jobs SET status = 'delivered', delivery_proof = $2, updated_at = NOW() WHERE id = $1`,
-      [Number(jobId), proofHash],
+      `UPDATE jobs SET status = 'delivered', updated_at = NOW() WHERE chain_id = $1`,
+      [Number(jobId)],
     );
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       [
         'job.delivery_submitted',
         Number(jobId),
@@ -317,12 +317,12 @@ export class EventHub extends EventEmitter {
     this.emit('job.completed', event);
 
     await this.materialize(
-      `UPDATE jobs SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      `UPDATE jobs SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE chain_id = $1`,
       [Number(jobId)],
     );
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       ['job.completed', Number(jobId), JSON.stringify(event.data)],
     );
 
@@ -354,7 +354,7 @@ export class EventHub extends EventEmitter {
     this.emit('job.dispute_raised', event);
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       [
         'job.dispute_raised',
         Number(jobId),
@@ -392,7 +392,7 @@ export class EventHub extends EventEmitter {
     this.emit('job.dispute_resolved', event);
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       [
         'job.dispute_resolved',
         Number(jobId),
@@ -415,12 +415,12 @@ export class EventHub extends EventEmitter {
     this.emit('job.validation_requested', event);
 
     await this.materialize(
-      `UPDATE jobs SET status = 'validating', updated_at = NOW() WHERE id = $1`,
+      `UPDATE jobs SET status = 'validating', updated_at = NOW() WHERE chain_id = $1`,
       [Number(jobId)],
     );
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       [
         'job.validation_requested',
         Number(jobId),
@@ -444,7 +444,7 @@ export class EventHub extends EventEmitter {
     this.emit('job.validation_completed', event);
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       [
         'job.validation_completed',
         Number(jobId),
@@ -474,7 +474,7 @@ export class EventHub extends EventEmitter {
     this.emit('validation.submitted', event);
 
     await this.materialize(
-      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT DO NOTHING',
+      'INSERT INTO events (type, job_id, data, created_at) VALUES ($1, (SELECT id FROM jobs WHERE chain_id = $2), $3, NOW()) ON CONFLICT DO NOTHING',
       [
         'validation.submitted',
         Number(jobId),

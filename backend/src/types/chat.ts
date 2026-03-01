@@ -207,9 +207,12 @@ export interface SessionContext {
   jobType?: 'audit' | 'code_review' | 'data_engineering' | 'nlp_content' | 'ml_ai' | 'frontend_ux' | 'infrastructure';
   slots?: JobSlots;
   selectedCriteria?: string[];
-  jobId?: number;
-  acceptedBidId?: number;
+  jobId?: string;
+  chainJobId?: number;
+  acceptedBidId?: string;
   bids?: Record<string, unknown>[];
+  lastJobsQuery?: Record<string, unknown>[];
+  currentJobId?: string;
   deliveryProofHash?: string;
   validationReport?: Record<string, unknown>;
   paymentTxHash?: string;

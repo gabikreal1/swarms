@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { insertBid, markBidAccepted } from '../../db/queries';
 import { USDC_MULTIPLIER, type SeedConfig } from '../config';
 import {
@@ -8,8 +9,8 @@ import type { SeededAgent } from './agents';
 import type { SeededJob } from './jobs';
 
 export interface SeededBid {
-  id: bigint;
-  jobId: bigint;
+  id: string;
+  jobId: string;
   bidder: string;
   price: bigint;
   priceUsdc: number;
@@ -33,9 +34,8 @@ export async function seedBids(
   jobs: SeededJob[],
   agents: SeededAgent[],
   genesisDate: Date,
-): Promise<Map<bigint, SeededBid[]>> {
-  const bidsByJob = new Map<bigint, SeededBid[]>();
-  let bidId = 1n;
+): Promise<Map<string, SeededBid[]>> {
+  const bidsByJob = new Map<string, SeededBid[]>();
 
   for (const job of jobs) {
     const numBids = randomInt(cfg.bidsPerJob.min, cfg.bidsPerJob.max);
@@ -54,6 +54,8 @@ export async function seedBids(
       const deliveryTime = BigInt(randomInt(1, 14) * 86400); // 1-14 days in seconds
       const bidDate = addHours(job.createdAt, 1, 48);
       const blockNumber = timestampToBlock(bidDate, genesisDate);
+
+      const bidId = randomUUID();
 
       await insertBid({
         id: bidId,
@@ -75,8 +77,6 @@ export async function seedBids(
         priceUsdc,
         accepted: false,
       });
-
-      bidId++;
     }
 
     // Accept one bid for jobs past 'open' status

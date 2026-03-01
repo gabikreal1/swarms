@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { insertJob, updateJobStatus } from '../../db/queries';
 import { getPool } from '../../db/pool';
 import { JOB_TEMPLATES } from '../templates/jobs';
@@ -13,7 +14,7 @@ import { generatePosterWallets } from '../wallets';
 export type JobStatus = 'open' | 'in_progress' | 'delivered' | 'validating' | 'completed' | 'disputed';
 
 export interface SeededJob {
-  id: bigint;
+  id: string;
   poster: string;
   title: string;
   description: string;
@@ -74,7 +75,7 @@ export async function seedJobs(
   const jobs: SeededJob[] = [];
 
   for (let i = 0; i < cfg.jobs; i++) {
-    const id = BigInt(i + 1);
+    const id = randomUUID();
     const createdAt = timestamps[i];
     const catConfig = weightedPick(categories, weights);
     const templates = JOB_TEMPLATES[catConfig.category] ?? [];
@@ -95,7 +96,7 @@ export async function seedJobs(
     const successCriteria = criteriaToSuccessCriteria(criteria);
     const criteriaHash = criteriaIds.length > 0 ? fakeCriteriaHash(criteriaIds) : undefined;
 
-    // Insert the job
+    // Insert the job (seed data — no chainId)
     await insertJob({
       id,
       poster,
@@ -119,7 +120,7 @@ export async function seedJobs(
         created_at = $8
       WHERE id = $1`,
       [
-        id.toString(),
+        id,
         budget.toString(),
         catConfig.category,
         criteriaHash ?? null,
@@ -144,7 +145,7 @@ export async function seedJobs(
       if (completedAt) {
         await pool.query(
           `UPDATE jobs SET completed_at = $2 WHERE id = $1`,
-          [id.toString(), completedAt.toISOString()],
+          [id, completedAt.toISOString()],
         );
       }
     }

@@ -142,10 +142,15 @@ export default function JobDetailScreen() {
           onPress: async () => {
             setTxLoading(String(bid.id));
             try {
+              if (!job.chainId || !bid.chainId) {
+                Alert.alert('Error', 'This job has no on-chain ID. Cannot submit transaction.');
+                setTxLoading(null);
+                return;
+              }
               const data = encodeFunctionData({
                 abi: ORDER_BOOK_ABI,
                 functionName: 'acceptBid',
-                args: [BigInt(id!), BigInt(bid.id)],
+                args: [BigInt(job.chainId), BigInt(bid.chainId)],
               });
 
               const txHash = await signAndSendTransaction({
@@ -215,10 +220,15 @@ export default function JobDetailScreen() {
           onPress: async () => {
             setTxLoading('approve');
             try {
+              if (!job.chainId) {
+                Alert.alert('Error', 'This job has no on-chain ID. Cannot submit transaction.');
+                setTxLoading(null);
+                return;
+              }
               const data = encodeFunctionData({
                 abi: ORDER_BOOK_ABI,
                 functionName: 'approveDelivery',
-                args: [BigInt(id!)],
+                args: [BigInt(job.chainId)],
               });
 
               const txHash = await signAndSendTransaction({
@@ -398,7 +408,7 @@ export default function JobDetailScreen() {
                     agentName: bid.agentName || bid.agent_address?.slice(0, 10) || 'Agent',
                     agentAddress: bid.agent_address || bid.agentAddress,
                     price: bid.price || bid.amount || '0',
-                    deliveryTime: bid.deliveryTime || bid.delivery_time || 'N/A',
+                    deliveryTime: String(bid.deliveryTime ?? bid.delivery_time ?? 'N/A'),
                     reputationScore: bid.reputationScore || bid.reputation || 0,
                     criteriaBitmask: bid.criteriaBitmask,
                     metadataDescription: bid.metadataDescription || bid.description,
@@ -407,7 +417,7 @@ export default function JobDetailScreen() {
                   totalCriteria={job.criteria?.length || 0}
                   onAccept={() => handleAcceptBid(bid)}
                   onReject={() => handleRejectBid(bid.id)}
-                  showActions={jobStatus === 'open' && !!isJobPoster}
+                  showActions={jobStatus === 'open' && !!isJobPoster && !!job.chainId}
                   loading={txLoading === String(bid.id)}
                 />
               ))}
@@ -456,12 +466,12 @@ export default function JobDetailScreen() {
         {(jobStatus === 'delivered' || jobStatus === 'validating') && (
           <>
             <Button
-              title="Approve Delivery"
+              title={job.chainId ? 'Approve Delivery' : 'Approve Delivery (off-chain)'}
               variant="filled"
               color={colors.systemGreen}
               onPress={handleApproveDelivery}
               loading={txLoading === 'approve'}
-              disabled={txLoading === 'approve'}
+              disabled={txLoading === 'approve' || !job.chainId}
             />
             <View style={{ height: 10 }} />
             <Button

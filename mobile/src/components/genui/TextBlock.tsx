@@ -1,9 +1,10 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useTheme } from '../../theme/useTheme';
 
 interface TextBlockProps {
   content: string;
+  isStreaming?: boolean;
 }
 
 function parseLine(line: string, colors: any, key: number) {
@@ -32,8 +33,24 @@ function parseLine(line: string, colors: any, key: number) {
   return parts;
 }
 
-export default function TextBlock({ content }: TextBlockProps) {
+export default function TextBlock({ content, isStreaming }: TextBlockProps) {
   const { colors, typography } = useTheme();
+  const cursorOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (isStreaming) {
+      const anim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(cursorOpacity, { toValue: 0, duration: 530, useNativeDriver: true }),
+          Animated.timing(cursorOpacity, { toValue: 1, duration: 530, useNativeDriver: true }),
+        ])
+      );
+      anim.start();
+      return () => anim.stop();
+    } else {
+      cursorOpacity.setValue(1);
+    }
+  }, [isStreaming]);
 
   const lines = (content || '').split('\n');
 
@@ -83,6 +100,11 @@ export default function TextBlock({ content }: TextBlockProps) {
           </Text>
         );
       })}
+      {isStreaming && (
+        <Animated.Text style={[{ color: colors.tint, opacity: cursorOpacity }]}>
+          {'\u258C'}
+        </Animated.Text>
+      )}
     </View>
   );
 }

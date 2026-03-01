@@ -3,17 +3,19 @@ import { getPool } from "../db/pool";
 import {
   insertJob,
   insertBid,
-  markBidAccepted,
+  markBidAcceptedByChainId,
   insertDelivery,
-  updateJobStatus,
+  updateJobStatusByChainId,
   insertDispute,
-  updateDisputeStatus,
+  updateDisputeStatusByChainId,
   insertAgent,
   updateAgentReputation,
   insertReputationEvent,
   insertEscrow,
   getLastBlock,
   setLastBlock,
+  getJobUuidByChainId,
+  getBidUuidByChainId,
 } from "../db/queries";
 import { streamService, StreamEvent } from "../services/stream";
 
@@ -310,15 +312,15 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
     const poster = args[1] as string;
 
     // Read full metadata from JobRegistry
     try {
-      const [jobData] = await this.jobRegistryReader.getJob(jobId);
+      const [jobData] = await this.jobRegistryReader.getJob(chainJobId);
       const meta = jobData.metadata;
       await insertJob({
-        id: jobId,
+        chainId: chainJobId,
         poster,
         description: meta.description,
         metadataUri: meta.metadataURI,
@@ -330,7 +332,7 @@ export class EventListener {
     } catch {
       // Fallback: insert minimal record
       await insertJob({
-        id: jobId,
+        chainId: chainJobId,
         poster,
         description: "",
         metadataUri: "",
@@ -347,19 +349,26 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    const bidId = args[1] as bigint;
+    const chainJobId = args[0] as bigint;
+    const chainBidId = args[1] as bigint;
     const bidder = args[2] as string;
     const price = args[3] as bigint;
 
+    // Resolve job UUID from chain_id
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    if (!jobUuid) {
+      console.error(`[EventListener] BidPlaced: no job found for chain_id ${chainJobId}`);
+      return;
+    }
+
     // Read full bid data from OrderBook
     try {
-      const [, bids] = await this.orderBookReader.getJob(jobId);
-      const bidData = bids.find((b: { id: bigint }) => b.id === bidId);
+      const [, bids] = await this.orderBookReader.getJob(chainJobId);
+      const bidData = bids.find((b: { id: bigint }) => b.id === chainBidId);
       if (bidData) {
         await insertBid({
-          id: bidId,
-          jobId,
+          chainId: chainBidId,
+          jobId: jobUuid,
           bidder,
           price,
           deliveryTime: BigInt(bidData.deliveryTime),
@@ -375,8 +384,8 @@ export class EventListener {
     }
 
     await insertBid({
-      id: bidId,
-      jobId,
+      chainId: chainBidId,
+      jobId: jobUuid,
       bidder,
       price,
       deliveryTime: 0n,
@@ -392,11 +401,11 @@ export class EventListener {
     blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    const bidId = args[1] as bigint;
+    const chainJobId = args[0] as bigint;
+    const chainBidId = args[1] as bigint;
 
-    await markBidAccepted(bidId, "");
-    await updateJobStatus(jobId, "in_progress");
+    await markBidAcceptedByChainId(chainBidId, "");
+    await updateJobStatusByChainId(chainJobId, "in_progress");
   }
 
   private async handleDeliverySubmitted(
@@ -404,12 +413,19 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    const bidId = args[1] as bigint;
+    const chainJobId = args[0] as bigint;
+    const chainBidId = args[1] as bigint;
     const proofHash = args[2] as string;
 
-    await insertDelivery(jobId, bidId, proofHash, blockNumber, txHash);
-    await updateJobStatus(jobId, "delivered");
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    const bidUuid = await getBidUuidByChainId(chainBidId);
+    if (!jobUuid || !bidUuid) {
+      console.error(`[EventListener] DeliverySubmitted: missing UUID for job=${chainJobId} bid=${chainBidId}`);
+      return;
+    }
+
+    await insertDelivery(jobUuid, bidUuid, proofHash, blockNumber, txHash);
+    await updateJobStatusByChainId(chainJobId, "delivered");
   }
 
   private async handleJobApproved(
@@ -417,8 +433,8 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    await updateJobStatus(jobId, "completed");
+    const chainJobId = args[0] as bigint;
+    await updateJobStatusByChainId(chainJobId, "completed");
   }
 
   private async handleDisputeRaised(
@@ -426,12 +442,18 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const disputeId = args[0] as bigint;
-    const jobId = args[1] as bigint;
+    const chainDisputeId = args[0] as bigint;
+    const chainJobId = args[1] as bigint;
     const initiator = args[2] as string;
     const reason = args[3] as string;
 
-    await insertDispute({ id: disputeId, jobId, initiator, reason, blockNumber, txHash });
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    if (!jobUuid) {
+      console.error(`[EventListener] DisputeRaised: no job found for chain_id ${chainJobId}`);
+      return;
+    }
+
+    await insertDispute({ chainId: chainDisputeId, jobId: jobUuid, initiator, reason, blockNumber, txHash });
   }
 
   private async handleDisputeResolved(
@@ -439,19 +461,19 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const disputeId = args[0] as bigint;
-    const jobId = args[1] as bigint;
+    const chainDisputeId = args[0] as bigint;
+    const chainJobId = args[1] as bigint;
     const resolution = Number(args[2]);
     const message = args[3] as string;
 
     const statusStr = DISPUTE_STATUS_MAP[resolution] ?? "none";
-    await updateDisputeStatus(disputeId, statusStr, message);
+    await updateDisputeStatusByChainId(chainDisputeId, statusStr, message);
 
     // Update job status based on resolution
     if (statusStr === "resolved_user") {
-      await updateJobStatus(jobId, "disputed");
+      await updateJobStatusByChainId(chainJobId, "disputed");
     } else if (statusStr === "resolved_agent") {
-      await updateJobStatus(jobId, "completed");
+      await updateJobStatusByChainId(chainJobId, "completed");
     }
   }
 
@@ -513,12 +535,18 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
     const user = args[1] as string;
     const agent = args[2] as string;
     const amount = args[3] as bigint;
 
-    await insertEscrow(jobId, user, agent, amount, blockNumber, txHash);
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    if (!jobUuid) {
+      console.error(`[EventListener] EscrowCreated: no job found for chain_id ${chainJobId}`);
+      return;
+    }
+
+    await insertEscrow(jobUuid, user, agent, amount, blockNumber, txHash);
   }
 
   private async handlePaymentReleased(
@@ -526,13 +554,14 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
     const payout = args[2] as bigint;
     const fee = args[3] as bigint;
 
     await getPool().query(
-      `UPDATE escrows SET released = TRUE, payout = $2, fee = $3 WHERE job_id = $1`,
-      [jobId.toString(), payout.toString(), fee.toString()],
+      `UPDATE escrows SET released = TRUE, payout = $2, fee = $3
+       WHERE job_id = (SELECT id FROM jobs WHERE chain_id = $1)`,
+      [chainJobId.toString(), payout.toString(), fee.toString()],
     );
   }
 
@@ -541,12 +570,12 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
 
     await getPool().query(
-      `UPDATE escrows SET refunded = TRUE WHERE job_id = $1`,
-      [jobId.toString()],
+      `UPDATE escrows SET refunded = TRUE
+       WHERE job_id = (SELECT id FROM jobs WHERE chain_id = $1)`,
+      [chainJobId.toString()],
     );
   }
 }
-

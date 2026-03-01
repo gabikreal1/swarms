@@ -5,7 +5,8 @@ import { getPool } from '../db/pool';
 // ────────────────────────────────────────────────────────────
 
 export interface JobFeedItem {
-  id: number;
+  id: string;
+  chainId: number | null;
   poster: string;
   description: string;
   metadataUri: string;
@@ -92,17 +93,18 @@ function competitionLevel(bidCount: number): 'low' | 'medium' | 'high' {
   return 'high';
 }
 
-function decodeCursor(cursor: string): { createdAt: string; id: number } | null {
+function decodeCursor(cursor: string): { createdAt: string; id: string } | null {
   try {
     const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
-    const [createdAt, id] = decoded.split('|');
-    return { createdAt, id: Number(id) };
+    const sepIdx = decoded.indexOf('|');
+    if (sepIdx === -1) return null;
+    return { createdAt: decoded.slice(0, sepIdx), id: decoded.slice(sepIdx + 1) };
   } catch {
     return null;
   }
 }
 
-function encodeCursor(createdAt: string, id: number): string {
+function encodeCursor(createdAt: string, id: string): string {
   return Buffer.from(`${createdAt}|${id}`).toString('base64url');
 }
 
@@ -206,7 +208,7 @@ export class FeedService {
       const cur = decodeCursor(filters.cursor);
       if (cur) {
         conditions.push(
-          `(j.created_at, j.id) < ($${paramIdx}::timestamp, $${paramIdx + 1}::bigint)`,
+          `(j.created_at, j.id) < ($${paramIdx}::timestamp, $${paramIdx + 1}::uuid)`,
         );
         params.push(cur.createdAt, cur.id);
         paramIdx += 2;
@@ -240,6 +242,7 @@ export class FeedService {
       )
       SELECT
         j.id,
+        j.chain_id,
         j.poster,
         j.description,
         j.metadata_uri,
@@ -270,7 +273,8 @@ export class FeedService {
 
     const items: JobFeedItem[] = rows.map(
       (r: Record<string, unknown>) => ({
-        id: Number(r.id),
+        id: r.id as string,
+        chainId: r.chain_id ? Number(r.chain_id) : null,
         poster: r.poster as string,
         description: r.description as string,
         metadataUri: r.metadata_uri as string,
@@ -354,6 +358,7 @@ export class FeedService {
       )
       SELECT
         j.id,
+        j.chain_id,
         j.poster,
         j.description,
         j.metadata_uri,
@@ -454,7 +459,8 @@ export class FeedService {
         const suggestedMax = Math.round(budget * 0.95);
 
         return {
-          id: Number(r.id),
+          id: r.id as string,
+          chainId: r.chain_id ? Number(r.chain_id) : null,
           poster: r.poster as string,
           description: r.description as string,
           metadataUri: r.metadata_uri as string,
@@ -645,7 +651,7 @@ export class FeedService {
         const cur = decodeSearchCursor(filters.cursor);
         if (cur && cur.kind === 'job') {
           conditions.push(
-            `(ts_rank(j.search_vector, plainto_tsquery('english', $1)), j.id) < ($${paramIdx}::float, $${paramIdx + 1}::bigint)`,
+            `(ts_rank(j.search_vector, plainto_tsquery('english', $1)), j.id) < ($${paramIdx}::float, $${paramIdx + 1}::uuid)`,
           );
           params.push(cur.rank, cur.id);
           paramIdx += 2;

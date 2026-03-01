@@ -266,8 +266,8 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
     // If a transaction was just confirmed, wait for the indexer to pick up the on-chain event
     const isTxConfirmed = body.actionResponse?.actionId === 'tx-confirmed';
     if (isTxConfirmed) {
-      log.chat.info(`tx-confirmed — waiting 12s for indexer to catch up session=${sessionId}`);
-      await new Promise((r) => setTimeout(r, 12000));
+      log.chat.info(`tx-confirmed — waiting 7s for indexer to catch up session=${sessionId}`);
+      await new Promise((r) => setTimeout(r, 7000));
     }
 
     // Detect if this is a greeting (new session, no real user input)
@@ -462,7 +462,7 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
           },
 
           onError: (error) => {
-            log.chat.error('LLM error:', error.message);
+            log.chat.error('LLM error:', error.message, error.stack);
             sendSSE(sessionId, {
               type: 'error',
               message: error.message,
@@ -495,22 +495,26 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
 
             insertMessage(sessionId, errorMessage).catch(() => {});
 
-            res.json({
-              sessionId,
-              message: errorMessage,
-              phase: session!.phase,
-            } as ChatResponse);
+            if (!res.headersSent) {
+              res.json({
+                sessionId,
+                message: errorMessage,
+                phase: session!.phase,
+              } as ChatResponse);
+            }
             resolve();
           },
         },
       ).catch(reject);
     });
   } catch (err) {
-    log.chat.error('message error:', (err as Error).message);
-    res.status(500).json({
-      error: 'Chat processing failed',
-      message: (err as Error).message,
-    });
+    log.chat.error('message error:', (err as Error).message, (err as Error).stack);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: 'Chat processing failed',
+        message: (err as Error).message,
+      });
+    }
   }
 });
 

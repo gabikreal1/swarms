@@ -62,7 +62,7 @@ export class ButlerChatLLM {
           messages: conversationMessages,
           tools: tools.length > 0 ? tools : undefined,
           stream: true,
-        });
+        }, { timeout: 30_000 });
 
         let iterationText = '';
         const accumulatedToolCalls: Map<number, AccumulatedToolCall> = new Map();
@@ -145,7 +145,14 @@ export class ButlerChatLLM {
 
           allToolsCalled.push(tc.name);
 
-          const result = await callbacks.onExecuteTool(tc.name, parsedArgs);
+          let result: Record<string, unknown>;
+          try {
+            result = await callbacks.onExecuteTool(tc.name, parsedArgs);
+          } catch (toolErr) {
+            // Return error as tool result so the LLM can respond gracefully
+            log.llm.error(`tool ${tc.name} threw:`, (toolErr as Error).message);
+            result = { error: `Tool execution failed: ${(toolErr as Error).message}` };
+          }
           callbacks.onToolCallComplete(tc.name, parsedArgs, result);
 
           conversationMessages.push({

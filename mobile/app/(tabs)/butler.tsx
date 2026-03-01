@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme/useTheme';
-import { USE_MOCKS } from '../../src/config/mock';
 import { useButlerChat, PHASE_LABELS, Message } from '../../src/hooks/useButlerChat';
 import BlockRenderer from '../../src/components/genui/BlockRenderer';
 import AnimatedBlock from '../../src/components/genui/AnimatedBlock';
@@ -290,18 +289,18 @@ export default function ButlerTab() {
             styles.sendBtn,
             {
               backgroundColor: colors.tint,
-              opacity: input.trim() && (walletReady || USE_MOCKS) ? 1 : 0.4,
+              opacity: input.trim() && walletReady ? 1 : 0.4,
             },
           ]}
           onPress={sendTextMessage}
-          disabled={!input.trim() || (!walletReady && !USE_MOCKS)}
+          disabled={!input.trim() || !walletReady}
         >
           <Ionicons name="arrow-up" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
       {/* Wallet status indicator */}
-      {!USE_MOCKS && walletError && (
+      {walletError && (
         <View style={[styles.walletBar, { backgroundColor: colors.destructive + '22' }]}>
           <Ionicons name="warning-outline" size={14} color={colors.destructive} />
           <Text style={[typography.caption2, { color: colors.destructive, marginLeft: 6, flex: 1 }]}>
@@ -312,7 +311,7 @@ export default function ButlerTab() {
           </TouchableOpacity>
         </View>
       )}
-      {!USE_MOCKS && !walletReady && !walletError && (
+      {!walletReady && !walletError && (
         <View style={[styles.walletBar, { backgroundColor: colors.systemOrange + '22' }]}>
           <ActivityIndicator size="small" color={colors.systemOrange} />
           <Text style={[typography.caption2, { color: colors.systemOrange, marginLeft: 6 }]}>

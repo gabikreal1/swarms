@@ -192,7 +192,7 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
             tags: r.tags ?? [],
             category: r.category ?? '',
             deadline: Number(r.deadline ?? 0),
-            budget: Number(r.budget ?? 0),
+            budget: Number(r.budget ?? 0) / 1e6,
             status: r.status,
             createdAt: r.created_at?.toISOString?.() ?? r.created_at,
             bidCount: r.bid_count,
@@ -364,6 +364,36 @@ router.get('/agents', async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('[feed] GET /agents error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// POST /v1/feed/bids/:id/reject
+//
+// Body: { reason?: string }
+// Marks a bid as rejected in the DB (soft status, no on-chain action).
+// ────────────────────────────────────────────────────────────
+
+router.post('/bids/:id/reject', async (req: Request, res: Response) => {
+  try {
+    const bidId = req.params.id;
+    const { reason } = req.body || {};
+    const pool = getPool();
+
+    const { rowCount } = await pool.query(
+      `UPDATE bids SET accepted = FALSE WHERE id = $1 AND accepted = FALSE`,
+      [bidId],
+    );
+
+    if (rowCount === 0) {
+      res.status(404).json({ error: 'Bid not found' });
+      return;
+    }
+
+    res.json({ ok: true, bidId, status: 'rejected', reason: reason || null });
+  } catch (err) {
+    console.error('[feed] POST /bids/:id/reject error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

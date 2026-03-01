@@ -15,7 +15,7 @@ import { encodeFunctionData } from 'viem';
 import { useTheme } from '../../src/theme/useTheme';
 import { api } from '../../src/api/client';
 import { CONTRACTS } from '../../src/config/chains';
-import { initWallet, signAndSendTransaction, waitForReceipt } from '../../src/wallet/circle';
+import { initWallet, getAccount, signAndSendTransaction, waitForReceipt, checkAllowance, approveUSDC } from '../../src/wallet/circle';
 import { useNotifications } from '../../src/contexts/NotificationContext';
 import { Section } from '../../src/components/ios/Section';
 import { SectionRow } from '../../src/components/ios/SectionRow';
@@ -33,11 +33,21 @@ const ORDER_BOOK_ABI = [
     inputs: [
       { name: 'jobId', type: 'uint256' },
       { name: 'bidId', type: 'uint256' },
+      { name: 'responseURI', type: 'string' },
     ],
     outputs: [],
   },
   {
     name: 'approveDelivery',
+    type: 'function',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'jobId', type: 'uint256' },
+    ],
+    outputs: [],
+  },
+  {
+    name: 'approveDeliveryOverride',
     type: 'function',
     stateMutability: 'nonpayable',
     inputs: [
@@ -129,12 +139,13 @@ export default function JobDetailScreen() {
     walletAddress.toLowerCase() === job.poster.toLowerCase();
 
   const handleAcceptBid = (bid: any) => {
-    const price = bid.price || bid.amount || '0';
+    const rawPrice = bid.price || bid.amount || '0';
+    const displayPrice = Number(rawPrice) > 1e4 ? Number(rawPrice) / 1e6 : Number(rawPrice);
     const name = bid.agentName || bid.agent_address?.slice(0, 10) || 'Agent';
 
     Alert.alert(
       'Accept Bid',
-      `Accept bid from ${name} for ${price} USDC?\n\nThis will lock the funds in escrow and assign the job to this agent.`,
+      `Accept bid from ${name} for ${displayPrice} USDC?\n\nThis will lock the funds in escrow and assign the job to this agent.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -147,10 +158,28 @@ export default function JobDetailScreen() {
                 setTxLoading(null);
                 return;
               }
+
+              // Approve USDC for Escrow if needed
+              const bidAmount = BigInt(bid.price || bid.amount || 0);
+              if (bidAmount > 0n) {
+                const account = await getAccount();
+                const currentAllowance = await checkAllowance(
+                  account.address,
+                  CONTRACTS.Escrow as `0x${string}`,
+                );
+                if (currentAllowance < bidAmount) {
+                  const approveHash = await approveUSDC(
+                    CONTRACTS.Escrow as `0x${string}`,
+                    bidAmount,
+                  );
+                  await waitForReceipt(approveHash as `0x${string}`);
+                }
+              }
+
               const data = encodeFunctionData({
                 abi: ORDER_BOOK_ABI,
                 functionName: 'acceptBid',
-                args: [BigInt(job.chainId), BigInt(bid.chainId)],
+                args: [BigInt(job.chainId), BigInt(bid.chainId), ''],
               });
 
               const txHash = await signAndSendTransaction({
@@ -190,20 +219,30 @@ export default function JobDetailScreen() {
     );
   };
 
-  const handleRejectBid = (bidId: number) => {
+  const handleRejectBid = (bidId: string) => {
     Alert.alert('Reject Bid', 'Are you sure you want to reject this bid?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Reject',
         style: 'destructive',
-        onPress: () => {
-          // Rejection is local-only for now (no on-chain action)
-          showNotification({
-            type: 'info',
-            title: 'Bid Rejected',
-            body: 'The bid has been dismissed',
-            jobId: id,
-          });
+        onPress: async () => {
+          try {
+            await api.rejectBid(String(bidId));
+            showNotification({
+              type: 'info',
+              title: 'Bid Rejected',
+              body: 'The bid has been dismissed',
+              jobId: id,
+            });
+            await fetchJob();
+          } catch {
+            showNotification({
+              type: 'info',
+              title: 'Bid Rejected',
+              body: 'The bid has been dismissed locally',
+              jobId: id,
+            });
+          }
         },
       },
     ]);
@@ -478,13 +517,55 @@ export default function JobDetailScreen() {
               title="Override Validation"
               variant="tinted"
               color={colors.systemOrange}
+              loading={txLoading === 'override'}
+              disabled={txLoading === 'override' || !job.chainId}
               onPress={() => {
                 Alert.alert(
                   'Override Validation',
-                  'This will manually override the automated validation result. Are you sure?',
+                  'This will manually override the automated validation and release escrowed funds. Are you sure?',
                   [
                     { text: 'Cancel', style: 'cancel' },
-                    { text: 'Override', style: 'destructive', onPress: () => {} },
+                    {
+                      text: 'Override',
+                      style: 'destructive',
+                      onPress: async () => {
+                        setTxLoading('override');
+                        try {
+                          const data = encodeFunctionData({
+                            abi: ORDER_BOOK_ABI,
+                            functionName: 'approveDeliveryOverride',
+                            args: [BigInt(job.chainId)],
+                          });
+                          const txHash = await signAndSendTransaction({
+                            to: CONTRACTS.OrderBook,
+                            data,
+                            value: '0',
+                          });
+                          showNotification({
+                            type: 'info',
+                            title: 'Transaction Sent',
+                            body: 'Overriding validation...',
+                            jobId: id,
+                          });
+                          const receipt = await waitForReceipt(txHash as `0x${string}`);
+                          if (receipt.status === 'success') {
+                            showNotification({
+                              type: 'success',
+                              title: 'Validation Overridden',
+                              body: 'Funds have been released to the agent',
+                              jobId: id,
+                            });
+                            Alert.alert('Success', `Override complete! Transaction: ${txHash.slice(0, 10)}...`);
+                            await fetchJob();
+                          } else {
+                            Alert.alert('Failed', 'Transaction reverted. Please try again.');
+                          }
+                        } catch (e: any) {
+                          Alert.alert('Error', e?.message || 'Failed to override validation');
+                        }
+                        setTxLoading(null);
+                      },
+                    },
                   ],
                 );
               }}

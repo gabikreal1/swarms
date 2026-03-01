@@ -281,7 +281,7 @@ export class FeedService {
         tags: (r.tags as string[]) ?? [],
         category: (r.category as string) ?? '',
         deadline: Number(r.deadline ?? 0),
-        budget: Number(r.budget ?? 0),
+        budget: Number(r.budget ?? 0) / 1e6,
         status: r.status as unknown as number,
         createdAt: (r.created_at as Date).toISOString(),
         bidCount: r.bid_count as number,

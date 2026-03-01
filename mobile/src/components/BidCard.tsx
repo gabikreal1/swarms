@@ -52,7 +52,9 @@ function formatDeliveryTime(raw: string | number | undefined | null): string {
 function formatUSDC(amount: string): string {
   const num = parseFloat(amount);
   if (isNaN(num)) return amount;
-  return `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // If the value looks like raw 6-decimal USDC (> 10000), convert
+  const usdc = num > 10000 ? num / 1e6 : num;
+  return `$${usdc.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function getReputationTier(score: number): { label: string; color: string } {
@@ -144,7 +146,7 @@ export default function BidCard({
             {formatUSDC(bid.price)}
           </Text>
           <Text style={[styles.priceSubtext, { color: colors.tertiaryLabel }]}>
-            {bid.price} USDC
+            {parseFloat(bid.price) > 10000 ? (parseFloat(bid.price) / 1e6).toFixed(2) : bid.price} USDC
           </Text>
         </View>
         <View style={styles.detailItem}>

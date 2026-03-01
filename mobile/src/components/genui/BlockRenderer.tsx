@@ -92,6 +92,7 @@ export default function BlockRenderer({
           title={block.title}
           budget={block.budget}
           criteriaCount={block.criteriaCount}
+          approval={block.approval}
           onConfirmed={(txHash) => {
             onAction('tx-confirmed', undefined, { txHash });
           }}

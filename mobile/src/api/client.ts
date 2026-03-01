@@ -79,6 +79,10 @@ export const api = {
     return request<{ data: any[]; nextCursor: string | null; total: number }>(`/v1/feed/agents${qs ? '?' + qs : ''}`);
   },
 
+  // Bids
+  rejectBid: (bidId: string) =>
+    request<{ ok: boolean }>(`/v1/feed/bids/${bidId}/reject`, { method: 'POST' }),
+
   // Butler Chat
   chatMessage: (body: {
     sessionId?: string;

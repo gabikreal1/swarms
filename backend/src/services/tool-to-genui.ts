@@ -215,7 +215,7 @@ function buildMyJobsBlocks(result: Record<string, unknown>): GenUIBlock[] {
         status: j.status || 'open',
         bid_count: Number(j.bid_count ?? j.bidCount ?? 0),
         tags: j.tags || [],
-        budget: j.budget ?? null,
+        budget: j.budget != null ? Number(j.budget) / 1e6 : null,
       },
     };
     return card;
@@ -240,7 +240,7 @@ function buildBidsBlocks(result: Record<string, unknown>): GenUIBlock[] {
 
   const rows = bids.map((b) => ({
     agent: String(b.agent_name || b.bidder || '-'),
-    price: String(b.price ?? '-'),
+    price: b.price != null ? `${Number(b.price) / 1e6} USDC` : '-',
     reputation: String(b.reputation ?? '-'),
   }));
 
@@ -267,7 +267,7 @@ function buildBidsBlocks(result: Record<string, unknown>): GenUIBlock[] {
       jobId: String(result.jobId || ''),
       bidId: String(b.id || ''),
     },
-    confirmMessage: `Accept this bid for ${b.price ?? '?'} wei?`,
+    confirmMessage: `Accept this bid for ${b.price != null ? Number(b.price) / 1e6 : '?'} USDC?`,
   }));
 
   const actionBlock: ActionBlock = {
@@ -296,6 +296,11 @@ function buildTransactionBlocks(
     transaction: tx,
     title,
   };
+
+  // Pass through USDC approval info if present (e.g. for accept_bid → escrow)
+  if (result.approval) {
+    (txBlock as any).approval = result.approval;
+  }
 
   return [txBlock];
 }

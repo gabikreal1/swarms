@@ -14,13 +14,6 @@ import {
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme/useTheme';
-import {
-  USE_MOCKS,
-  MOCK_CHAT_MESSAGES,
-  GREETING_BLOCKS,
-  CLARIFICATION_BLOCKS,
-  ANALYSIS_BLOCKS,
-} from '../../src/config/mock';
 import { api, API_BASE } from '../../src/api/client';
 import { initWallet } from '../../src/wallet/circle';
 import BlockRenderer from '../../src/components/genui/BlockRenderer';
@@ -54,15 +47,6 @@ const PHASE_LABELS: Record<string, string> = {
   status_inquiry: 'Checking status',
 };
 
-const MOCK_AGENT_REPLIES = [
-  'I\'m working on that right now. Give me a moment to analyze the contract.',
-  'Good question. Based on my analysis, the approve function lacks input validation for the zero address.',
-  'I\'ve found a potential reentrancy vector in the withdrawal flow. I\'ll include remediation steps in my report.',
-  'The gas benchmarks are looking promising — I\'m seeing a 34% reduction so far on the mint function.',
-  'I\'ve completed this section. Moving on to the next set of tests now.',
-  'Here\'s what I recommend: add a nonReentrant modifier and emit events on all state changes.',
-];
-
 export default function ChatScreen() {
   const { id: chatId } = useLocalSearchParams<{ id: string }>();
   const { colors, typography } = useTheme();
@@ -76,7 +60,6 @@ export default function ChatScreen() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [walletReady, setWalletReady] = useState(false);
   const flatListRef = useRef<FlatList>(null);
-  const mockReplyIndex = useRef(0);
   const eventSourceRef = useRef<any>(null);
   const retryCountRef = useRef(0);
   const MAX_RETRIES = 5;
@@ -103,21 +86,6 @@ export default function ChatScreen() {
 
   // Load initial data
   useEffect(() => {
-    if (USE_MOCKS) {
-      // In mock mode, show greeting blocks
-      setMessages([
-        {
-          id: 'greeting-mock',
-          role: 'butler',
-          text: '',
-          timestamp: Date.now(),
-          blocks: GREETING_BLOCKS as GenUIBlock[],
-        },
-      ]);
-      setPhase('greeting');
-      return;
-    }
-
     // If chatId is "new", start a fresh session
     if (chatId === 'new') {
       sendToButler({ message: '' }); // Trigger greeting
@@ -130,7 +98,7 @@ export default function ChatScreen() {
 
   // Connect SSE when sessionId is available
   useEffect(() => {
-    if (USE_MOCKS || !sessionId) return;
+    if (!sessionId) return;
 
     connectSSE(sessionId);
     return () => {
@@ -304,19 +272,12 @@ export default function ChatScreen() {
     };
     tagsResponse?: { selectedTags: string[] };
   }) => {
-    if (!walletAddress && !USE_MOCKS) {
+    if (!walletAddress) {
       Alert.alert('Wallet Not Ready', 'Please wait for the wallet to connect before sending messages.');
       return;
     }
 
     setAgentTyping(true);
-
-    if (USE_MOCKS) {
-      // Mock mode: simulate different block responses
-      await mockButlerResponse(payload);
-      setAgentTyping(false);
-      return;
-    }
 
     try {
       const result = await api.chatMessage({
@@ -360,55 +321,6 @@ export default function ChatScreen() {
     } finally {
       setAgentTyping(false);
     }
-  };
-
-  const mockButlerResponse = async (payload: any) => {
-    await new Promise((r) => setTimeout(r, 600 + Math.random() * 400));
-
-    if (payload.actionResponse) {
-      // Show clarification form after selecting a vertical
-      setPhase('clarification');
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `butler-${Date.now()}`,
-          role: 'butler',
-          text: '',
-          timestamp: Date.now(),
-          blocks: CLARIFICATION_BLOCKS as GenUIBlock[],
-        },
-      ]);
-    } else if (payload.formResponse) {
-      // Show analysis after form submission
-      setPhase('analysis');
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `butler-${Date.now()}`,
-          role: 'butler',
-          text: '',
-          timestamp: Date.now(),
-          blocks: ANALYSIS_BLOCKS as GenUIBlock[],
-        },
-      ]);
-    } else if (payload.message) {
-      // Plain text reply
-      const reply =
-        MOCK_AGENT_REPLIES[
-          mockReplyIndex.current % MOCK_AGENT_REPLIES.length
-        ];
-      mockReplyIndex.current++;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `butler-${Date.now()}`,
-          role: 'butler',
-          text: reply,
-          timestamp: Date.now(),
-        },
-      ]);
-    }
-    scrollToEnd();
   };
 
   // GenUI callbacks
@@ -746,18 +658,18 @@ export default function ChatScreen() {
             styles.sendBtn,
             {
               backgroundColor: colors.tint,
-              opacity: input.trim() && (walletReady || USE_MOCKS) ? 1 : 0.4,
+              opacity: input.trim() && walletReady ? 1 : 0.4,
             },
           ]}
           onPress={sendTextMessage}
-          disabled={!input.trim() || (!walletReady && !USE_MOCKS)}
+          disabled={!input.trim() || !walletReady}
         >
           <Ionicons name="arrow-up" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
       {/* Wallet status indicator */}
-      {!walletReady && !USE_MOCKS && (
+      {!walletReady && (
         <View style={[styles.walletBar, { backgroundColor: colors.systemOrange + '22' }]}>
           <ActivityIndicator size="small" color={colors.systemOrange} />
           <Text style={[typography.caption2, { color: colors.systemOrange, marginLeft: 6 }]}>

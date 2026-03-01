@@ -9,7 +9,7 @@ import { log } from '../lib/logger';
 const finalizePipeline = new FinalizePipeline();
 
 // ABI fragments for on-chain interactions
-const ACCEPT_BID_ABI = ['function acceptBid(uint256 jobId, uint256 bidId)'];
+const ACCEPT_BID_ABI = ['function acceptBid(uint256 jobId, uint256 bidId, string responseURI)'];
 const APPROVE_JOB_ABI = ['function approveJob(uint256 jobId)'];
 
 const acceptBidIface = new ethers.Interface(ACCEPT_BID_ABI);
@@ -264,13 +264,14 @@ export async function executeButlerTool(
       const bidId = args.bidId as string;
       const pool = getPool();
       const jobRow = await pool.query(`SELECT chain_id FROM jobs WHERE id = $1`, [jobId]);
-      const bidRow = await pool.query(`SELECT chain_id FROM bids WHERE id = $1`, [bidId]);
+      const bidRow = await pool.query(`SELECT chain_id, price FROM bids WHERE id = $1`, [bidId]);
       const chainJobId = jobRow.rows[0]?.chain_id;
       const chainBidId = bidRow.rows[0]?.chain_id;
+      const bidPrice = bidRow.rows[0]?.price;
       if (!chainJobId || !chainBidId) {
         return { error: 'Could not find on-chain IDs for job or bid' };
       }
-      const data = acceptBidIface.encodeFunctionData('acceptBid', [chainJobId, chainBidId]);
+      const data = acceptBidIface.encodeFunctionData('acceptBid', [chainJobId, chainBidId, '']);
       return {
         bidId,
         transaction: {
@@ -278,6 +279,11 @@ export async function executeButlerTool(
           data,
           value: '0',
           chainId: config.chainId,
+        },
+        // Tell frontend to approve USDC for escrow before sending
+        approval: {
+          spender: config.escrowAddress,
+          amount: String(bidPrice || 0),
         },
       };
     }

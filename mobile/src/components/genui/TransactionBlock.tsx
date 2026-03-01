@@ -2,7 +2,13 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../theme/useTheme';
-import { signAndSendTransaction, waitForReceipt } from '../../wallet/circle';
+import {
+  signAndSendTransaction,
+  waitForReceipt,
+  checkAllowance,
+  approveUSDC,
+  getAccount,
+} from '../../wallet/circle';
 
 interface TransactionBlockProps {
   transaction: {
@@ -14,6 +20,10 @@ interface TransactionBlockProps {
   title?: string;
   budget?: number;
   criteriaCount?: number;
+  approval?: {
+    spender: string;
+    amount: string;
+  };
   onConfirmed: (txHash: string) => void;
 }
 
@@ -22,15 +32,36 @@ export default function TransactionBlock({
   title,
   budget,
   criteriaCount,
+  approval,
   onConfirmed,
 }: TransactionBlockProps) {
   const { colors, typography } = useTheme();
-  const [status, setStatus] = useState<'idle' | 'signing' | 'confirming' | 'confirmed' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'approving' | 'signing' | 'confirming' | 'confirmed' | 'error'>('idle');
   const [txHash, setTxHash] = useState<string | null>(null);
 
   const handleSign = async () => {
-    setStatus('signing');
     try {
+      // If approval needed (e.g. USDC for escrow), handle it first
+      if (approval?.spender && approval?.amount) {
+        const amount = BigInt(approval.amount);
+        if (amount > 0n) {
+          setStatus('approving');
+          const account = await getAccount();
+          const currentAllowance = await checkAllowance(
+            account.address,
+            approval.spender as `0x${string}`,
+          );
+          if (currentAllowance < amount) {
+            const approveHash = await approveUSDC(
+              approval.spender as `0x${string}`,
+              amount,
+            );
+            await waitForReceipt(approveHash as `0x${string}`);
+          }
+        }
+      }
+
+      setStatus('signing');
       const hash = await signAndSendTransaction({
         to: transaction.to,
         data: transaction.data,
@@ -55,18 +86,17 @@ export default function TransactionBlock({
     }
   };
 
+  const statusLabel =
+    status === 'approving' ? 'Approving USDC...' :
+    status === 'signing' ? 'Signing...' :
+    status === 'confirming' ? 'Confirming...' : null;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.tertiarySystemBackground, borderColor: colors.separator }]}>
       <View style={styles.header}>
         <Ionicons name="document-text-outline" size={20} color={colors.tint} />
-        <Text style={[styles.headerText, { color: colors.label }]}>Post Job Transaction</Text>
+        <Text style={[styles.headerText, { color: colors.label }]}>{title || 'Transaction'}</Text>
       </View>
-
-      {title && (
-        <Text style={[styles.detail, { color: colors.secondaryLabel }]} numberOfLines={2}>
-          {title}
-        </Text>
-      )}
 
       <View style={styles.row}>
         {budget != null && (
@@ -101,25 +131,20 @@ export default function TransactionBlock({
           style={[
             styles.signBtn,
             { backgroundColor: colors.tint },
-            (status === 'signing' || status === 'confirming') && { opacity: 0.6 },
+            statusLabel != null && { opacity: 0.6 },
           ]}
           onPress={handleSign}
-          disabled={status === 'signing' || status === 'confirming'}
+          disabled={statusLabel != null}
         >
-          {status === 'signing' ? (
+          {statusLabel ? (
             <>
               <ActivityIndicator size="small" color="#FFF" />
-              <Text style={styles.signBtnText}>Signing...</Text>
-            </>
-          ) : status === 'confirming' ? (
-            <>
-              <ActivityIndicator size="small" color="#FFF" />
-              <Text style={styles.signBtnText}>Confirming...</Text>
+              <Text style={styles.signBtnText}>{statusLabel}</Text>
             </>
           ) : status === 'error' ? (
-            <Text style={styles.signBtnText}>Retry Sign & Post</Text>
+            <Text style={styles.signBtnText}>Retry</Text>
           ) : (
-            <Text style={styles.signBtnText}>Sign & Post Job</Text>
+            <Text style={styles.signBtnText}>Sign & Submit</Text>
           )}
         </TouchableOpacity>
       )}
@@ -148,10 +173,6 @@ const styles = StyleSheet.create({
   headerText: {
     fontSize: 15,
     fontWeight: '700',
-  },
-  detail: {
-    fontSize: 13,
-    lineHeight: 18,
   },
   row: {
     flexDirection: 'row',

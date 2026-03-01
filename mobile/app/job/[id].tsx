@@ -472,29 +472,55 @@ export default function JobDetailScreen() {
       )}
 
       {/* Delivery */}
-      {(jobStatus === 'delivered' || jobStatus === 'validating') && job.delivery && (
+      {(jobStatus === 'delivered' || jobStatus === 'validating' || jobStatus === 'completed') && job.delivery && (
         <Section header="Delivery">
           <SectionRow
-            label="Proof Hash"
-            detail={job.delivery.proofHash}
+            label="Status"
+            value={jobStatus === 'completed' ? 'Approved' : 'Submitted'}
           />
-          {job.delivery.evidenceUri && (
+          <SectionRow
+            label="Proof Hash"
+            detail={job.delivery.proofHash?.slice(0, 20) + '...'}
+          />
+          {job.delivery.deliveredAt && (
             <SectionRow
-              label="Evidence"
-              detail={job.delivery.evidenceUri}
-              accessory="disclosure"
-              onPress={() => {
-                const uri = job.delivery.evidenceUri;
-                const url = uri.startsWith('ipfs://')
-                  ? uri.replace('ipfs://', 'https://ipfs.io/ipfs/')
-                  : uri;
-                Linking.openURL(url);
-              }}
+              label="Delivered"
+              value={new Date(job.delivery.deliveredAt).toLocaleDateString()}
             />
           )}
+          {(job.delivery.evidenceGatewayUrl || job.delivery.evidenceUri) && (
+            <SectionRow
+              label="View Evidence"
+              accessory="disclosure"
+              onPress={() => {
+                const url = job.delivery.evidenceGatewayUrl || job.delivery.evidenceUri;
+                Linking.openURL(url);
+              }}
+              isLast={!job.metadataGatewayUrl}
+            />
+          )}
+          {job.metadataGatewayUrl && (
+            <SectionRow
+              label="View Job Metadata"
+              accessory="disclosure"
+              onPress={() => {
+                Linking.openURL(job.metadataGatewayUrl);
+              }}
+              isLast
+            />
+          )}
+        </Section>
+      )}
+
+      {/* Job Metadata link (when no delivery section) */}
+      {!(jobStatus === 'delivered' || jobStatus === 'validating' || jobStatus === 'completed') && job.metadataGatewayUrl && (
+        <Section header="IPFS Data">
           <SectionRow
-            label="Validation"
-            value={job.delivery.validationStatus || 'Pending'}
+            label="View Job Metadata"
+            accessory="disclosure"
+            onPress={() => {
+              Linking.openURL(job.metadataGatewayUrl);
+            }}
             isLast
           />
         </Section>

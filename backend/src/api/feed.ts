@@ -199,22 +199,79 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
       }));
     };
 
+    // Shared helper: fetch delivery for a job UUID
+    const fetchDeliveryForJob = async (pool: ReturnType<typeof getPool>, jobUuid: string, chainId: number | null) => {
+      const dResult = await pool.query(
+        `SELECT d.proof_hash, d.delivered_at, d.tx_hash FROM deliveries d WHERE d.job_id = $1`,
+        [jobUuid],
+      );
+      if (dResult.rows.length === 0) return null;
+      const d = dResult.rows[0];
+      const delivery: Record<string, unknown> = {
+        proofHash: d.proof_hash,
+        deliveredAt: (d.delivered_at as Date)?.toISOString?.() ?? d.delivered_at,
+        txHash: d.tx_hash,
+      };
+
+      // Try to read on-chain evidence URI
+      if (chainId) {
+        try {
+          const { pinata } = await import('../services/pinata');
+          const { ethers } = await import('ethers');
+          const { config } = await import('../config');
+          if (config.orderBookAddress) {
+            const ABI = ['function criteriaDeliveries(uint256) view returns (bytes32 evidenceMerkleRoot, bytes32 overallProofHash, string evidenceURI, uint256 deliveredAt)'];
+            const network = new ethers.Network('arc-testnet', config.chainId);
+            const provider = new ethers.JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
+            const contract = new ethers.Contract(config.orderBookAddress, ABI, provider);
+            const cd = await contract.criteriaDeliveries(chainId);
+            const evidenceURI: string = cd.evidenceURI;
+            if (evidenceURI) {
+              delivery.evidenceUri = evidenceURI;
+              delivery.evidenceGatewayUrl = evidenceURI.startsWith('ipfs://')
+                ? pinata.getGatewayUrl(evidenceURI)
+                : evidenceURI;
+            }
+          }
+        } catch {
+          // best-effort
+        }
+      }
+      return delivery;
+    };
+
     // Shared helper: build the job response object
-    const buildJobResponse = (r: Record<string, unknown>, bids: ReturnType<typeof fetchBidsForJob> extends Promise<infer T> ? T : never) => ({
-      id: r.id,
-      chainId: r.chain_id ? Number(r.chain_id) : null,
-      poster: r.poster,
-      description: r.description,
-      metadataUri: r.metadata_uri,
-      tags: r.tags ?? [],
-      category: r.category ?? '',
-      deadline: Number(r.deadline ?? 0),
-      budget: Number(r.budget ?? 0) / 1e6,
-      status: r.status,
-      createdAt: (r.created_at as Date)?.toISOString?.() ?? r.created_at,
-      bidCount: bids.length,
-      bids,
-    });
+    const buildJobResponse = async (r: Record<string, unknown>, bids: ReturnType<typeof fetchBidsForJob> extends Promise<infer T> ? T : never, pool: ReturnType<typeof getPool>) => {
+      const chainId = r.chain_id ? Number(r.chain_id) : null;
+      const metadataUri = (r.metadata_uri as string) || '';
+      let metadataGatewayUrl: string | null = null;
+      if (metadataUri.startsWith('ipfs://')) {
+        try {
+          const { pinata } = await import('../services/pinata');
+          metadataGatewayUrl = pinata.getGatewayUrl(metadataUri);
+        } catch {}
+      }
+
+      const delivery = await fetchDeliveryForJob(pool, r.id as string, chainId);
+
+      return {
+        id: r.id,
+        chainId,
+        poster: r.poster,
+        description: r.description,
+        metadataUri,
+        metadataGatewayUrl,
+        tags: r.tags ?? [],
+        category: r.category ?? '',
+        deadline: Number(r.deadline ?? 0),
+        budget: Number(r.budget ?? 0) / 1e6,
+        status: r.status,
+        createdAt: (r.created_at as Date)?.toISOString?.() ?? r.created_at,
+        bidCount: bids.length,
+        bids,
+        delivery,
+      };
+    };
 
     if (UUID_RE.test(idParam)) {
       // Lookup by UUID in DB
@@ -226,7 +283,7 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
       if (result.rows.length > 0) {
         const r = result.rows[0];
         const bids = await fetchBidsForJob(pool, r.id);
-        res.json({ data: buildJobResponse(r, bids) });
+        res.json({ data: await buildJobResponse(r, bids, pool) });
         return;
       }
       res.status(404).json({ error: 'Job not found' });
@@ -249,7 +306,7 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
     if (dbResult.rows.length > 0) {
       const r = dbResult.rows[0];
       const bids = await fetchBidsForJob(pool, r.id);
-      res.json({ data: buildJobResponse(r, bids) });
+      res.json({ data: await buildJobResponse(r, bids, pool) });
       return;
     }
 

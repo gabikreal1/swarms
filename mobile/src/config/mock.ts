@@ -20,11 +20,12 @@ export const MOCK_WALLET = {
 
 export const MOCK_JOBS = [
   {
-    id: 1,
+    id: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+    chainId: null,
     title: 'Audit ERC-20 token smart contract',
     description:
       'Need an AI agent to perform a comprehensive security audit of our ERC-20 token contract. Should check for reentrancy, overflow, and access control vulnerabilities. Deliver a PDF report with severity ratings.',
-    status: 'OPEN',
+    status: 'open',
     budget: '200',
     deadline: '2026-03-15T00:00:00Z',
     category: 'Security',
@@ -35,18 +36,20 @@ export const MOCK_JOBS = [
       { id: 'c2', description: 'Deliver PDF report within 48 hours', measurable: true, source: 'similar_job' as const },
       { id: 'c3', description: 'Include remediation suggestions for each finding', measurable: false, source: 'llm_suggested' as const },
     ],
+    poster: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
     bids: [
-      { id: 101, agentName: 'AuditBot-v3', price: '180', deliveryTime: '36h', reputationScore: 0.94, criteriaBitmask: [0, 1, 2] },
-      { id: 102, agentName: 'SecureAgent', price: '210', deliveryTime: '24h', reputationScore: 0.87, criteriaBitmask: [0, 2] },
-      { id: 103, agentName: 'ChainGuard', price: '195', deliveryTime: '48h', reputationScore: 0.91, criteriaBitmask: [0, 1, 2] },
+      { id: 'b1010101-0101-4b01-b101-010101010101', chainId: null, agentName: 'AuditBot-v3', agent_address: '0x2B5AD5c4795c026514f8317c7a215E218DcCD6cF', price: '180', deliveryTime: '36h', reputationScore: 0.94, criteriaBitmask: [0, 1, 2], metadataDescription: 'I will perform a comprehensive audit using Slither, Mythril, and manual review. Full PDF report with severity ratings delivered within 36 hours.' },
+      { id: 'b1020202-0202-4b02-b202-020202020202', chainId: null, agentName: 'SecureAgent', agent_address: '0x6813Eb9362372EEF6200f3b1dbC3f819671cBA69', price: '210', deliveryTime: '24h', reputationScore: 0.87, criteriaBitmask: [0, 2], metadataDescription: 'Express audit with priority turnaround. I specialize in ERC-20 and DeFi security patterns.' },
+      { id: 'b1030303-0303-4b03-b303-030303030303', chainId: null, agentName: 'ChainGuard', agent_address: '0x1efF47bc3a10a45D4B230B5d10E37751FE6AA718', price: '195', deliveryTime: '48h', reputationScore: 0.91, criteriaBitmask: [0, 1, 2], metadataDescription: 'Thorough audit covering all OWASP smart contract vulnerabilities. Includes gas optimization suggestions.' },
     ],
   },
   {
-    id: 2,
+    id: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e',
+    chainId: null,
     title: 'Build data pipeline for on-chain analytics',
     description:
       'Create an automated data pipeline that indexes events from our marketplace contract, computes daily aggregate stats (volume, unique users, avg job price), and stores them in a queryable format.',
-    status: 'IN_PROGRESS',
+    status: 'in_progress',
     budget: '500',
     deadline: '2026-03-20T00:00:00Z',
     category: 'Data',
@@ -59,11 +62,12 @@ export const MOCK_JOBS = [
     bids: [],
   },
   {
-    id: 3,
+    id: 'c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f',
+    chainId: null,
     title: 'Generate sentiment report from 500 reviews',
     description:
       'Analyze 500 customer reviews from our product page. Classify each as positive/negative/neutral, extract key themes, and produce a dashboard-ready JSON summary with actionable insights.',
-    status: 'DELIVERED',
+    status: 'delivered',
     budget: '150',
     deadline: '2026-03-10T00:00:00Z',
     category: 'NLP',
@@ -81,11 +85,12 @@ export const MOCK_JOBS = [
     },
   },
   {
-    id: 4,
+    id: 'd4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f80',
+    chainId: null,
     title: 'Optimize gas usage for NFT minting contract',
     description:
       'Review and refactor our NFT minting contract to reduce gas costs. Target at least 30% reduction in mint transaction gas. Provide before/after gas benchmarks.',
-    status: 'VALIDATING',
+    status: 'validating',
     budget: '300',
     deadline: '2026-03-25T00:00:00Z',
     category: 'Optimization',
@@ -103,10 +108,11 @@ export const MOCK_JOBS = [
     },
   },
   {
-    id: 5,
+    id: 'e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8091',
+    chainId: null,
     title: 'Deploy subgraph for marketplace events',
     description: 'Create and deploy a subgraph that indexes JobPosted, BidPlaced, and JobCompleted events from our marketplace contract on ARC testnet.',
-    status: 'COMPLETED',
+    status: 'completed',
     budget: '120',
     deadline: '2026-02-28T00:00:00Z',
     category: 'Infrastructure',
@@ -179,14 +185,26 @@ export const MOCK_NOTIFICATIONS = [
   {
     type: 'info' as const,
     title: 'New Bid',
-    body: 'AuditBot-v3 placed a bid on "Audit ERC-20 token"',
+    body: 'ChainGuard placed a bid of 195 USDC on "Audit ERC-20 token"',
     jobId: '1',
   },
   {
     type: 'info' as const,
     title: 'New Bid',
-    body: 'SecureAgent placed a bid on "Audit ERC-20 token"',
+    body: 'AuditBot-v3 placed a bid of 180 USDC on "Audit ERC-20 token"',
     jobId: '1',
+  },
+  {
+    type: 'info' as const,
+    title: 'New Bid',
+    body: 'SecureAgent placed a bid of 210 USDC on "Audit ERC-20 token"',
+    jobId: '1',
+  },
+  {
+    type: 'success' as const,
+    title: 'Bid Accepted',
+    body: 'Your bid on "Build data pipeline" has been accepted',
+    jobId: '2',
   },
   {
     type: 'success' as const,

@@ -4,7 +4,8 @@ import type { JobSlots, SuccessCriterion } from './job-slots';
 
 export type GenUIBlockType =
   | 'text' | 'code' | 'card' | 'form' | 'criteria' | 'tags'
-  | 'action' | 'progress' | 'table' | 'findings' | 'chart' | 'diff';
+  | 'action' | 'progress' | 'table' | 'findings' | 'chart' | 'diff'
+  | 'transaction';
 
 interface BaseBlock {
   id: string;
@@ -103,6 +104,7 @@ export interface TableColumn {
   key: string;
   label: string;
   align?: 'left' | 'center' | 'right';
+  flex?: number;
 }
 
 export interface TableBlock extends BaseBlock {
@@ -155,10 +157,18 @@ export interface DiffBlock extends BaseBlock {
   filename?: string;
 }
 
+export interface TransactionBlock extends BaseBlock {
+  type: 'transaction';
+  transaction: { to: string; data: string; value: string; chainId: number };
+  title?: string;
+  budget?: number;
+  criteriaCount?: number;
+}
+
 export type GenUIBlock =
   | TextBlock | CodeBlock | CardBlock | FormBlock | CriteriaBlock
   | TagsBlock | ActionBlock | ProgressBlock | TableBlock
-  | FindingsBlock | ChartBlock | DiffBlock;
+  | FindingsBlock | ChartBlock | DiffBlock | TransactionBlock;
 
 // ── Session Phases ────────────────────────────────────────
 
@@ -198,12 +208,19 @@ export interface SessionContext {
   jobType?: 'audit' | 'code_review' | 'data_engineering' | 'nlp_content' | 'ml_ai' | 'frontend_ux' | 'infrastructure';
   slots?: JobSlots;
   selectedCriteria?: string[];
-  jobId?: number;
-  acceptedBidId?: number;
+  jobId?: string;
+  chainJobId?: number;
+  acceptedBidId?: string;
   bids?: Record<string, unknown>[];
+  lastJobsQuery?: Record<string, unknown>[];
+  currentJobId?: string;
   deliveryProofHash?: string;
   validationReport?: Record<string, unknown>;
   paymentTxHash?: string;
+  description?: string;
+  budget?: string;
+  deadline?: string;
+  complexity?: string;
 }
 
 export interface ConversationSession {

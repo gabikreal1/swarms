@@ -277,3 +277,11 @@ export function fetchSupplyDemand(tags?: string) {
 export function fetchTags() {
   return fetchApi<{ data: { id: string; label: string }[]; total: number }>("/v1/taxonomy/tags");
 }
+
+export function fetchJobById(id: string | number) {
+  return fetchApi<{ data: JobFeedItem }>(`/v1/feed/jobs/${id}`);
+}
+
+export function fetchSearch(params: Record<string, string>) {
+  return fetchApi<PaginatedResponse<{ kind: string; id: string | number; headline: string; rank: number; data: Record<string, unknown> }>>("/v1/feed/search", params);
+}

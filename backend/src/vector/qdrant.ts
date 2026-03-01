@@ -18,7 +18,7 @@ export interface SimilarJobResult {
 }
 
 export interface CompletedJobPayload {
-  jobId: number;
+  jobId: string;
   title: string;
   description: string;
   tags: string[];
@@ -134,7 +134,7 @@ export class QdrantService {
       wait: true,
       points: [
         {
-          id: String(job.jobId),
+          id: job.jobId,
           vector,
           payload: {
             title: job.title,

@@ -52,9 +52,28 @@ export function updateContextFromToolResult(
       break;
 
     case 'post_job':
-      if (typeof toolResult.jobId === 'number') {
+      if (typeof toolResult.jobId === 'string') {
         updated.jobId = toolResult.jobId;
       }
+      if (typeof toolResult.chainJobId === 'number') {
+        updated.chainJobId = toolResult.chainJobId;
+      }
+      break;
+
+    case 'get_my_jobs':
+      updated.lastJobsQuery = toolResult.jobs as Record<string, unknown>[];
+      break;
+
+    case 'get_job_bids':
+      updated.bids = toolResult.bids as Record<string, unknown>[];
+      if (toolResult.jobId) updated.currentJobId = toolResult.jobId as string;
+      break;
+
+    case 'accept_bid':
+      if (toolResult.bidId) updated.acceptedBidId = toolResult.bidId as string;
+      break;
+
+    case 'approve_delivery':
       break;
 
     default:

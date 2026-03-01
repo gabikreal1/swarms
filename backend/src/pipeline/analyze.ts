@@ -54,7 +54,6 @@ export class AnalyzePipeline {
     try {
       if (embedding.length > 0) {
         const similarResults = await this.qdrant.findSimilarJobs(embedding, {
-          category: slots.deliverableType?.value || undefined,
           tags: slots.requiredCapabilities?.value || undefined,
         });
 

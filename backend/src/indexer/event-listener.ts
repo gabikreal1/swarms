@@ -1,20 +1,25 @@
 import { ethers, Contract, Provider, WebSocketProvider, JsonRpcProvider } from "ethers";
+import { log } from "../lib/logger";
 import { getPool } from "../db/pool";
 import {
   insertJob,
   insertBid,
-  markBidAccepted,
+  markBidAcceptedByChainId,
   insertDelivery,
-  updateJobStatus,
+  updateJobStatusByChainId,
   insertDispute,
-  updateDisputeStatus,
+  updateDisputeStatusByChainId,
   insertAgent,
   updateAgentReputation,
   insertReputationEvent,
   insertEscrow,
   getLastBlock,
   setLastBlock,
+  getJobUuidByChainId,
+  getBidUuidByChainId,
 } from "../db/queries";
+import { streamService, StreamEvent } from "../services/stream";
+import { pinata } from "../services/pinata";
 
 // ────────────────────────────────────────────────────────────
 // Minimal ABIs (event signatures only)
@@ -107,11 +112,17 @@ export class EventListener {
   constructor(private config: EventListenerConfig) {
     this.pollIntervalMs = config.pollIntervalMs ?? 5_000;
 
+    const network = new ethers.Network('arc-testnet', config.rpcUrl.includes('testnet') ? 5042002 : 5042002);
     if (config.rpcUrl.startsWith("ws")) {
-      this.provider = new WebSocketProvider(config.rpcUrl);
+      this.provider = new WebSocketProvider(config.rpcUrl, network, { staticNetwork: network });
     } else {
-      this.provider = new JsonRpcProvider(config.rpcUrl);
+      this.provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
     }
+
+    // Disable ENS resolution — this chain has no ENS registry
+    this.provider.resolveName = async (name: string) => {
+      try { return ethers.getAddress(name); } catch { return null; }
+    };
 
     this.orderBook = new Contract(config.orderBookAddress, ORDER_BOOK_ABI, this.provider);
     this.agentRegistry = new Contract(config.agentRegistryAddress, AGENT_REGISTRY_ABI, this.provider);
@@ -121,16 +132,20 @@ export class EventListener {
     this.orderBookReader = new Contract(config.orderBookAddress, ORDER_BOOK_READ_ABI, this.provider);
   }
 
+  private broadcastEvent(type: StreamEvent["type"], data: Record<string, unknown>): void {
+    streamService.broadcast({ type, data, timestamp: new Date().toISOString() });
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
-    console.log("[EventListener] starting...");
+    log.indexer.info('starting...');
 
     // Do an initial catch-up, then poll on interval
     await this.poll();
     this.pollTimer = setInterval(() => {
       this.poll().catch((err) =>
-        console.error("[EventListener] poll error:", err),
+        log.indexer.error('poll error:', (err as Error).message),
       );
     }, this.pollIntervalMs);
   }
@@ -141,7 +156,7 @@ export class EventListener {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-    console.log("[EventListener] stopped");
+    log.indexer.info('stopped');
   }
 
   // ──────────────────────────────────────────────────────────
@@ -151,14 +166,16 @@ export class EventListener {
   private async poll(): Promise<void> {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      await Promise.all([
-        this.processContractEvents("OrderBook", this.orderBook, currentBlock),
-        this.processContractEvents("AgentRegistry", this.agentRegistry, currentBlock),
-        this.processContractEvents("ReputationToken", this.reputationToken, currentBlock),
-        this.processContractEvents("Escrow", this.escrowContract, currentBlock),
-      ]);
+      // Process sequentially to avoid RPC rate limits
+      await this.processContractEvents("OrderBook", this.orderBook, currentBlock);
+      await this.processContractEvents("AgentRegistry", this.agentRegistry, currentBlock);
+      await this.processContractEvents("ReputationToken", this.reputationToken, currentBlock);
+      await this.processContractEvents("Escrow", this.escrowContract, currentBlock);
     } catch (err) {
-      console.error("[EventListener] poll failed:", (err as Error).message);
+      const msg = (err as Error).message || '';
+      // Suppress noisy RPC errors (filter expiry, rate limits)
+      if (msg.includes('filter not found') || msg.includes('coalesce')) return;
+      log.indexer.error('poll failed:', msg);
     }
   }
 
@@ -168,18 +185,27 @@ export class EventListener {
     currentBlock: number,
   ): Promise<void> {
     const lastBlock = await getLastBlock(name);
-    const fromBlock = Number(lastBlock) === 0 && this.config.startBlock
+    let fromBlock = Number(lastBlock) === 0 && this.config.startBlock
       ? this.config.startBlock
       : Number(lastBlock) + 1;
 
-    if (fromBlock > currentBlock) return;
+    if (fromBlock > currentBlock) {
+      log.indexer.warn(`${name}: fromBlock ${fromBlock} ahead of chain head ${currentBlock}, resetting`);
+      fromBlock = 0;
+      await setLastBlock(name, 0n);
+    }
 
-    console.log(`[EventListener] ${name}: scanning blocks ${fromBlock} → ${currentBlock}`);
+    // Only log when there's a meaningful range to scan
+    const blocksToScan = currentBlock - fromBlock;
+    if (blocksToScan > 0) {
+      log.indexer.debug(`${name}: scanning ${blocksToScan} blocks (${fromBlock}→${currentBlock})`);
+    }
 
-    // Process in chunks to avoid RPC limits
-    const chunkSize = 2_000;
+    // Process in chunks to avoid RPC limits (10k blocks, delay between queries)
+    const chunkSize = 10_000;
     let start = fromBlock;
     let totalLogs = 0;
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
     while (start <= currentBlock) {
       const end = Math.min(start + chunkSize - 1, currentBlock);
@@ -191,18 +217,24 @@ export class EventListener {
 
       for (const eventName of eventNames) {
         try {
-          const logs = await contract.queryFilter(eventName, start, end);
-          totalLogs += logs.length;
-          for (const log of logs) {
+          const evLogs = await contract.queryFilter(eventName, start, end);
+          totalLogs += evLogs.length;
+          for (const evLog of evLogs) {
             try {
-              await this.handleLog(name, contract, log);
+              await this.handleLog(name, contract, evLog);
             } catch (err) {
-              console.error(`[EventListener] error handling ${name}:${eventName} at block ${log.blockNumber}:`, err);
+              log.indexer.error(`error handling ${name}:${eventName} at block ${evLog.blockNumber}:`, (err as Error).message);
             }
           }
         } catch (err) {
-          console.error(`[EventListener] queryFilter ${name}:${eventName} failed:`, (err as Error).message);
+          const msg = (err as Error).message || '';
+          // Suppress noisy RPC filter errors
+          if (!msg.includes('filter not found') && !msg.includes('coalesce')) {
+            log.indexer.error(`queryFilter ${name}:${eventName} failed:`, msg);
+          }
         }
+        // Rate limit: wait 150ms between queries to stay under 20/sec
+        await delay(150);
       }
 
       await setLastBlock(name, BigInt(end));
@@ -210,7 +242,7 @@ export class EventListener {
     }
 
     if (totalLogs > 0) {
-      console.log(`[EventListener] ${name}: processed ${totalLogs} events`);
+      log.indexer.info(`${name}: processed ${totalLogs} events`);
     }
   }
 
@@ -232,24 +264,32 @@ export class EventListener {
     const blockNumber = BigInt(log.blockNumber);
     const txHash = log.transactionHash;
 
-    switch (`${contractName}:${parsed.name}`) {
+    const key = `${contractName}:${parsed.name}`;
+
+    switch (key) {
       case "OrderBook:JobPosted":
         await this.handleJobPosted(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.posted", { jobId: Number(parsed.args[0]), poster: parsed.args[1] });
         break;
       case "OrderBook:BidPlaced":
         await this.handleBidPlaced(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.bid_placed", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]), bidder: parsed.args[2], price: parsed.args[3].toString() });
         break;
       case "OrderBook:BidAccepted":
         await this.handleBidAccepted(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.bid_accepted", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]), poster: parsed.args[2], agent: parsed.args[3] });
         break;
       case "OrderBook:DeliverySubmitted":
         await this.handleDeliverySubmitted(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.delivered", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]), proofHash: parsed.args[2] });
         break;
       case "OrderBook:JobApproved":
         await this.handleJobApproved(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.completed", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]) });
         break;
       case "OrderBook:DisputeRaised":
         await this.handleDisputeRaised(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.disputed", { disputeId: Number(parsed.args[0]), jobId: Number(parsed.args[1]), initiator: parsed.args[2], reason: parsed.args[3] });
         break;
       case "OrderBook:DisputeResolved":
         await this.handleDisputeResolved(parsed.args, blockNumber, txHash);
@@ -285,27 +325,49 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
     const poster = args[1] as string;
 
     // Read full metadata from JobRegistry
     try {
-      const [jobData] = await this.jobRegistryReader.getJob(jobId);
+      const [jobData] = await this.jobRegistryReader.getJob(chainJobId);
       const meta = jobData.metadata;
+      const metadataURI: string = meta.metadataURI;
+
+      // Extract budget and category from IPFS metadata (best-effort)
+      let budget: string | undefined;
+      let category: string | undefined;
+      if (metadataURI) {
+        try {
+          const ipfsMeta = await pinata.fetchJSON(metadataURI);
+          if (ipfsMeta?.budget?.amount != null) {
+            // Store as wei-scale USDC (6 decimals)
+            budget = String(Math.round(ipfsMeta.budget.amount * 1e6));
+          }
+          if (ipfsMeta?.category) {
+            category = ipfsMeta.category;
+          }
+        } catch (err) {
+          log.indexer.debug(`IPFS metadata fetch for job ${chainJobId} skipped:`, (err as Error).message);
+        }
+      }
+
       await insertJob({
-        id: jobId,
+        chainId: chainJobId,
         poster,
         description: meta.description,
-        metadataUri: meta.metadataURI,
+        metadataUri: metadataURI,
         tags: Array.from(meta.tags),
         deadline: BigInt(meta.deadline),
+        budget,
+        category,
         blockNumber,
         txHash,
       });
     } catch {
       // Fallback: insert minimal record
       await insertJob({
-        id: jobId,
+        chainId: chainJobId,
         poster,
         description: "",
         metadataUri: "",
@@ -322,19 +384,26 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    const bidId = args[1] as bigint;
+    const chainJobId = args[0] as bigint;
+    const chainBidId = args[1] as bigint;
     const bidder = args[2] as string;
     const price = args[3] as bigint;
 
+    // Resolve job UUID from chain_id
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    if (!jobUuid) {
+      log.indexer.error(` BidPlaced: no job found for chain_id ${chainJobId}`);
+      return;
+    }
+
     // Read full bid data from OrderBook
     try {
-      const [, bids] = await this.orderBookReader.getJob(jobId);
-      const bidData = bids.find((b: { id: bigint }) => b.id === bidId);
+      const [, bids] = await this.orderBookReader.getJob(chainJobId);
+      const bidData = bids.find((b: { id: bigint }) => b.id === chainBidId);
       if (bidData) {
         await insertBid({
-          id: bidId,
-          jobId,
+          chainId: chainBidId,
+          jobId: jobUuid,
           bidder,
           price,
           deliveryTime: BigInt(bidData.deliveryTime),
@@ -350,8 +419,8 @@ export class EventListener {
     }
 
     await insertBid({
-      id: bidId,
-      jobId,
+      chainId: chainBidId,
+      jobId: jobUuid,
       bidder,
       price,
       deliveryTime: 0n,
@@ -367,11 +436,11 @@ export class EventListener {
     blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    const bidId = args[1] as bigint;
+    const chainJobId = args[0] as bigint;
+    const chainBidId = args[1] as bigint;
 
-    await markBidAccepted(bidId, "");
-    await updateJobStatus(jobId, "in_progress");
+    await markBidAcceptedByChainId(chainBidId, "");
+    await updateJobStatusByChainId(chainJobId, "in_progress");
   }
 
   private async handleDeliverySubmitted(
@@ -379,12 +448,19 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    const bidId = args[1] as bigint;
+    const chainJobId = args[0] as bigint;
+    const chainBidId = args[1] as bigint;
     const proofHash = args[2] as string;
 
-    await insertDelivery(jobId, bidId, proofHash, blockNumber, txHash);
-    await updateJobStatus(jobId, "delivered");
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    const bidUuid = await getBidUuidByChainId(chainBidId);
+    if (!jobUuid || !bidUuid) {
+      log.indexer.error(` DeliverySubmitted: missing UUID for job=${chainJobId} bid=${chainBidId}`);
+      return;
+    }
+
+    await insertDelivery(jobUuid, bidUuid, proofHash, blockNumber, txHash);
+    await updateJobStatusByChainId(chainJobId, "delivered");
   }
 
   private async handleJobApproved(
@@ -392,8 +468,8 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
-    await updateJobStatus(jobId, "completed");
+    const chainJobId = args[0] as bigint;
+    await updateJobStatusByChainId(chainJobId, "completed");
   }
 
   private async handleDisputeRaised(
@@ -401,12 +477,18 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const disputeId = args[0] as bigint;
-    const jobId = args[1] as bigint;
+    const chainDisputeId = args[0] as bigint;
+    const chainJobId = args[1] as bigint;
     const initiator = args[2] as string;
     const reason = args[3] as string;
 
-    await insertDispute({ id: disputeId, jobId, initiator, reason, blockNumber, txHash });
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    if (!jobUuid) {
+      log.indexer.error(` DisputeRaised: no job found for chain_id ${chainJobId}`);
+      return;
+    }
+
+    await insertDispute({ chainId: chainDisputeId, jobId: jobUuid, initiator, reason, blockNumber, txHash });
   }
 
   private async handleDisputeResolved(
@@ -414,19 +496,19 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const disputeId = args[0] as bigint;
-    const jobId = args[1] as bigint;
+    const chainDisputeId = args[0] as bigint;
+    const chainJobId = args[1] as bigint;
     const resolution = Number(args[2]);
     const message = args[3] as string;
 
     const statusStr = DISPUTE_STATUS_MAP[resolution] ?? "none";
-    await updateDisputeStatus(disputeId, statusStr, message);
+    await updateDisputeStatusByChainId(chainDisputeId, statusStr, message);
 
     // Update job status based on resolution
     if (statusStr === "resolved_user") {
-      await updateJobStatus(jobId, "disputed");
+      await updateJobStatusByChainId(chainJobId, "disputed");
     } else if (statusStr === "resolved_agent") {
-      await updateJobStatus(jobId, "completed");
+      await updateJobStatusByChainId(chainJobId, "completed");
     }
   }
 
@@ -488,12 +570,18 @@ export class EventListener {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
     const user = args[1] as string;
     const agent = args[2] as string;
     const amount = args[3] as bigint;
 
-    await insertEscrow(jobId, user, agent, amount, blockNumber, txHash);
+    const jobUuid = await getJobUuidByChainId(chainJobId);
+    if (!jobUuid) {
+      log.indexer.error(` EscrowCreated: no job found for chain_id ${chainJobId}`);
+      return;
+    }
+
+    await insertEscrow(jobUuid, user, agent, amount, blockNumber, txHash);
   }
 
   private async handlePaymentReleased(
@@ -501,13 +589,14 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
     const payout = args[2] as bigint;
     const fee = args[3] as bigint;
 
     await getPool().query(
-      `UPDATE escrows SET released = TRUE, payout = $2, fee = $3 WHERE job_id = $1`,
-      [jobId.toString(), payout.toString(), fee.toString()],
+      `UPDATE escrows SET released = TRUE, payout = $2, fee = $3
+       WHERE job_id = (SELECT id FROM jobs WHERE chain_id = $1)`,
+      [chainJobId.toString(), payout.toString(), fee.toString()],
     );
   }
 
@@ -516,12 +605,12 @@ export class EventListener {
     _blockNumber: bigint,
     _txHash: string,
   ): Promise<void> {
-    const jobId = args[0] as bigint;
+    const chainJobId = args[0] as bigint;
 
     await getPool().query(
-      `UPDATE escrows SET refunded = TRUE WHERE job_id = $1`,
-      [jobId.toString()],
+      `UPDATE escrows SET refunded = TRUE
+       WHERE job_id = (SELECT id FROM jobs WHERE chain_id = $1)`,
+      [chainJobId.toString()],
     );
   }
 }
-

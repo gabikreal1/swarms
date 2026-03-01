@@ -31,7 +31,8 @@ END $$;
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS jobs (
-  id            BIGINT PRIMARY KEY,
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chain_id      BIGINT,               -- on-chain uint256 jobId (NULL for seed data)
   poster        VARCHAR(42) NOT NULL,
   description   TEXT NOT NULL,
   metadata_uri  TEXT,
@@ -48,18 +49,24 @@ CREATE TABLE IF NOT EXISTS jobs (
   all_required  BOOLEAN,
   passing_score SMALLINT,
   block_number  BIGINT NOT NULL,
-  tx_hash       VARCHAR(66) NOT NULL
+  tx_hash       VARCHAR(66) NOT NULL,
+  search_vector TSVECTOR GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(description, '') || ' ' || coalesce(array_to_string(tags, ' '), ''))
+  ) STORED
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_chain_id ON jobs (chain_id) WHERE chain_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_poster   ON jobs (poster);
 CREATE INDEX IF NOT EXISTS idx_jobs_status   ON jobs (status);
 CREATE INDEX IF NOT EXISTS idx_jobs_deadline ON jobs (deadline);
 CREATE INDEX IF NOT EXISTS idx_jobs_tags     ON jobs USING GIN (tags);
 CREATE INDEX IF NOT EXISTS idx_jobs_created  ON jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_search   ON jobs USING GIN (search_vector);
 
 CREATE TABLE IF NOT EXISTS bids (
-  id            BIGINT PRIMARY KEY,
-  job_id        BIGINT NOT NULL REFERENCES jobs(id),
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chain_id      BIGINT,               -- on-chain uint256 bidId (NULL for seed data)
+  job_id        UUID NOT NULL REFERENCES jobs(id),
   bidder        VARCHAR(42) NOT NULL,
   price         NUMERIC(78,0) NOT NULL,
   delivery_time BIGINT,
@@ -72,6 +79,7 @@ CREATE TABLE IF NOT EXISTS bids (
   tx_hash       VARCHAR(66) NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bids_chain_id ON bids (chain_id) WHERE chain_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_bids_job_id  ON bids (job_id);
 CREATE INDEX IF NOT EXISTS idx_bids_bidder  ON bids (bidder);
 CREATE INDEX IF NOT EXISTS idx_bids_accepted ON bids (accepted) WHERE accepted = TRUE;
@@ -89,16 +97,21 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   block_number  BIGINT NOT NULL,
-  tx_hash       VARCHAR(66) NOT NULL
+  tx_hash       VARCHAR(66) NOT NULL,
+  search_vector TSVECTOR GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(name, '') || ' ' || coalesce(array_to_string(capabilities, ' '), ''))
+  ) STORED
 );
 
 CREATE INDEX IF NOT EXISTS idx_agents_status     ON agents (status);
 CREATE INDEX IF NOT EXISTS idx_agents_reputation ON agents (reputation DESC);
 CREATE INDEX IF NOT EXISTS idx_agents_caps       ON agents USING GIN (capabilities);
+CREATE INDEX IF NOT EXISTS idx_agents_search     ON agents USING GIN (search_vector);
 
 CREATE TABLE IF NOT EXISTS disputes (
-  id                  BIGINT PRIMARY KEY,
-  job_id              BIGINT NOT NULL REFERENCES jobs(id),
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chain_id            BIGINT,               -- on-chain uint256 disputeId (NULL for seed data)
+  job_id              UUID NOT NULL REFERENCES jobs(id),
   initiator           VARCHAR(42) NOT NULL,
   reason              TEXT,
   evidence            TEXT[] DEFAULT '{}',
@@ -110,6 +123,7 @@ CREATE TABLE IF NOT EXISTS disputes (
   tx_hash             VARCHAR(66) NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_disputes_chain_id ON disputes (chain_id) WHERE chain_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_disputes_job_id ON disputes (job_id);
 CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes (status);
 
@@ -134,8 +148,8 @@ CREATE INDEX IF NOT EXISTS idx_rep_events_time  ON reputation_events (created_at
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS deliveries (
-  job_id        BIGINT PRIMARY KEY REFERENCES jobs(id),
-  bid_id        BIGINT NOT NULL REFERENCES bids(id),
+  job_id        UUID PRIMARY KEY REFERENCES jobs(id),
+  bid_id        UUID NOT NULL REFERENCES bids(id),
   proof_hash    VARCHAR(66) NOT NULL,
   delivered_at  TIMESTAMP NOT NULL DEFAULT NOW(),
   block_number  BIGINT NOT NULL,
@@ -147,7 +161,7 @@ CREATE TABLE IF NOT EXISTS deliveries (
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS escrows (
-  job_id        BIGINT PRIMARY KEY REFERENCES jobs(id),
+  job_id        UUID PRIMARY KEY REFERENCES jobs(id),
   poster        VARCHAR(42) NOT NULL,
   agent         VARCHAR(42) NOT NULL,
   amount        NUMERIC(78,0) NOT NULL,
@@ -224,7 +238,7 @@ CREATE INDEX IF NOT EXISTS idx_sd_snap ON supply_demand (snapshot_at DESC);
 CREATE TABLE IF NOT EXISTS events (
   id              BIGSERIAL PRIMARY KEY,
   type            VARCHAR(60) NOT NULL,
-  job_id          BIGINT,
+  job_id          UUID,
   data            JSONB NOT NULL DEFAULT '{}',
   created_at      TIMESTAMP NOT NULL DEFAULT NOW()
 );

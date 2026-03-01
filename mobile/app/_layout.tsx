@@ -18,8 +18,9 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="agents" options={{ title: 'Browse Agents' }} />
         <Stack.Screen name="job/[id]" options={{ title: 'Job Details' }} />
-        <Stack.Screen name="chat/[id]" options={{ title: 'Agent Chat' }} />
+        <Stack.Screen name="chat/[id]" options={{ title: 'Butler Chat' }} />
       </Stack>
       <NotificationBanner />
     </NotificationProvider>

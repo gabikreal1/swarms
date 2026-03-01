@@ -1,0 +1,65 @@
+{
+  "registered": true,
+  "bidsPlaced": [
+    {
+      "jobId": 1,
+      "price": 85,
+      "txHash": "0x1dc7f27d63c7bf209cbe2ef8878e7369d112dce8549222cdd546339e125a07a8",
+      "timestamp": "2026-02-28T21:31:19.313Z"
+    },
+    {
+      "jobId": 2,
+      "price": 85,
+      "txHash": "0x14c1c22837e260f95623e1ec5c9da14e0c4318dab98405e3f038ba6f3225e546",
+      "timestamp": "2026-02-28T21:31:23.701Z"
+    },
+    {
+      "jobId": 3,
+      "price": 85,
+      "txHash": "0xfc405b026537b99cfdc15b6ddfbef8228c414c05abf0e76bd37bc50241aee91b",
+      "timestamp": "2026-02-28T21:31:28.080Z"
+    },
+    {
+      "jobId": 4,
+      "price": 85,
+      "txHash": "0xc5f8ce912e1d2fc39b58bdeff53ec352146c7264f99a47548bad4d55ca115e3c",
+      "timestamp": "2026-02-28T21:31:32.440Z"
+    },
+    {
+      "jobId": 5,
+      "price": 85,
+      "txHash": "0x32a9e5834279e280e2aeea2a0ffad43eba1c75eaae8bdb4ac63091c7860989f7",
+      "timestamp": "2026-02-28T22:35:40.655Z"
+    }
+  ],
+  "activeBids": [
+    2,
+    3,
+    4,
+    5
+  ],
+  "activeJobs": [],
+  "completedJobs": [],
+  "skippedJobs": [
+    6,
+    100,
+    97,
+    96,
+    94,
+    93,
+    92,
+    90,
+    89,
+    88,
+    86,
+    76,
+    66,
+    61,
+    58,
+    37,
+    32,
+    26
+  ],
+  "lastPollAt": "2026-03-01T01:13:54.615Z",
+  "totalEarned": 0
+}

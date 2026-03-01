@@ -17,7 +17,8 @@ export interface BidItem {
 }
 
 export interface JobFeedItem {
-  id: number;
+  id: string;
+  chainId: number | null;
   poster: string;
   description: string;
   metadataUri: string;
@@ -71,6 +72,22 @@ export interface FeedFilters {
   limit?: number;
 }
 
+export interface SearchFilters {
+  q: string;
+  type?: 'jobs' | 'agents' | 'all';
+  status?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface SearchResultItem {
+  kind: 'job' | 'agent';
+  id: string;
+  headline: string;
+  rank: number;
+  data: Record<string, unknown>;
+}
+
 // ────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────
@@ -90,18 +107,49 @@ function competitionLevel(bidCount: number): 'low' | 'medium' | 'high' {
   return 'high';
 }
 
-function decodeCursor(cursor: string): { createdAt: string; id: number } | null {
+function decodeCursor(cursor: string): { createdAt: string; id: string } | null {
   try {
     const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
-    const [createdAt, id] = decoded.split('|');
-    return { createdAt, id: Number(id) };
+    const sepIdx = decoded.indexOf('|');
+    if (sepIdx === -1) return null;
+    return { createdAt: decoded.slice(0, sepIdx), id: decoded.slice(sepIdx + 1) };
   } catch {
     return null;
   }
 }
 
-function encodeCursor(createdAt: string, id: number): string {
+function encodeCursor(createdAt: string, id: string): string {
   return Buffer.from(`${createdAt}|${id}`).toString('base64url');
+}
+
+function decodeAgentCursor(cursor: string): { createdAt: string; wallet: string } | null {
+  try {
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    const sepIdx = decoded.indexOf('|');
+    if (sepIdx === -1) return null;
+    return { createdAt: decoded.slice(0, sepIdx), wallet: decoded.slice(sepIdx + 1) };
+  } catch {
+    return null;
+  }
+}
+
+function encodeAgentCursor(createdAt: string, wallet: string): string {
+  return Buffer.from(`${createdAt}|${wallet}`).toString('base64url');
+}
+
+function decodeSearchCursor(cursor: string): { kind: string; rank: number; id: string } | null {
+  try {
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    const [kind, rankStr, id] = decoded.split('|');
+    if (!kind || !rankStr || !id) return null;
+    return { kind, rank: Number(rankStr), id };
+  } catch {
+    return null;
+  }
+}
+
+function encodeSearchCursor(kind: string, rank: number, id: string): string {
+  return Buffer.from(`${kind}|${rank}|${id}`).toString('base64url');
 }
 
 // ────────────────────────────────────────────────────────────
@@ -174,7 +222,7 @@ export class FeedService {
       const cur = decodeCursor(filters.cursor);
       if (cur) {
         conditions.push(
-          `(j.created_at, j.id) < ($${paramIdx}::timestamp, $${paramIdx + 1}::bigint)`,
+          `(j.created_at, j.id) < ($${paramIdx}::timestamp, $${paramIdx + 1}::uuid)`,
         );
         params.push(cur.createdAt, cur.id);
         paramIdx += 2;
@@ -185,14 +233,30 @@ export class FeedService {
 
     const limit = Math.min(Math.max(filters.limit ?? 20, 1), 100);
 
+    // maxExistingBids filter — apply in SQL so pagination counts stay correct
+    if (filters.maxExistingBids != null) {
+      conditions.push(
+        `(SELECT COUNT(*)::int FROM bids WHERE bids.job_id = j.id) <= $${paramIdx}`,
+      );
+      params.push(filters.maxExistingBids);
+      paramIdx++;
+    }
+
     // --- Build query ---
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // We fetch limit + 1 rows to detect if there is a next page.
+    // PERCENT_RANK is computed over the full jobs table via a CTE
+    // so pagination/filtering does not skew the percentile.
     const sql = `
+      WITH budget_ranks AS (
+        SELECT id, PERCENT_RANK() OVER (ORDER BY budget) AS budget_percentile
+        FROM jobs
+      )
       SELECT
         j.id,
+        j.chain_id,
         j.poster,
         j.description,
         j.metadata_uri,
@@ -203,11 +267,12 @@ export class FeedService {
         j.status,
         j.created_at,
         COALESCE(bc.bid_count, 0)::int AS bid_count,
-        PERCENT_RANK() OVER (ORDER BY j.budget) AS budget_percentile
+        COALESCE(br.budget_percentile, 0) AS budget_percentile
       FROM jobs j
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS bid_count FROM bids b WHERE b.job_id = j.id
       ) bc ON TRUE
+      LEFT JOIN budget_ranks br ON br.id = j.id
       ${whereClause}
       ORDER BY j.created_at DESC, j.id DESC
       LIMIT $${paramIdx}
@@ -217,39 +282,32 @@ export class FeedService {
     const result = await pool.query(sql, params);
     let rows = result.rows;
 
-    // --- maxExistingBids filter (post-query since it requires the subquery) ---
-    if (filters.maxExistingBids != null) {
-      rows = rows.filter(
-        (r: Record<string, unknown>) => (r.bid_count as number) <= filters.maxExistingBids!,
-      );
-    }
-
     const hasMore = rows.length > limit;
     if (hasMore) rows = rows.slice(0, limit);
 
     // --- Fetch bids for all jobs in one query ---
-    const jobIds = rows.map((r: Record<string, unknown>) => Number(r.id));
-    let bidsMap: Map<number, BidItem[]> = new Map();
+    const jobIds = rows.map((r: Record<string, unknown>) => r.id as string);
+    let bidsMap: Map<string, BidItem[]> = new Map();
 
     if (jobIds.length > 0) {
       const bidsSql = `
         SELECT id, job_id, bidder, price, delivery_time, reputation, metadata_uri, accepted, created_at
         FROM bids
-        WHERE job_id = ANY($1)
+        WHERE job_id = ANY($1::uuid[])
         ORDER BY created_at ASC
       `;
       const bidsResult = await pool.query(bidsSql, [jobIds]);
       for (const b of bidsResult.rows) {
-        const jobId = Number(b.job_id);
+        const jobId = b.job_id as string;
         if (!bidsMap.has(jobId)) bidsMap.set(jobId, []);
         bidsMap.get(jobId)!.push({
           id: Number(b.id),
-          jobId,
+          jobId: Number(b.job_id),
           bidder: b.bidder as string,
           price: b.price?.toString() ?? '0',
           deliveryTime: Number(b.delivery_time ?? 0),
           reputation: b.reputation?.toString() ?? '0',
-          metadataURI: b.metadata_uri as string ?? '',
+          metadataURI: (b.metadata_uri as string) ?? '',
           accepted: b.accepted as boolean,
           createdAt: Math.floor(new Date(b.created_at).getTime() / 1000),
         });
@@ -257,31 +315,32 @@ export class FeedService {
     }
 
     // --- Check disputes ---
-    let disputeJobIds: Set<number> = new Set();
+    let disputeJobIds: Set<string> = new Set();
     if (jobIds.length > 0) {
       const disputeSql = `
         SELECT DISTINCT job_id FROM disputes
-        WHERE job_id = ANY($1) AND status NOT IN ('none', 'dismissed')
+        WHERE job_id = ANY($1::uuid[]) AND status NOT IN ('none', 'dismissed')
       `;
       const disputeResult = await pool.query(disputeSql, [jobIds]);
       for (const d of disputeResult.rows) {
-        disputeJobIds.add(Number(d.job_id));
+        disputeJobIds.add(d.job_id as string);
       }
     }
 
     const items: JobFeedItem[] = rows.map(
       (r: Record<string, unknown>) => {
-        const id = Number(r.id);
+        const id = r.id as string;
         const bids = bidsMap.get(id) ?? [];
         return {
           id,
+          chainId: r.chain_id ? Number(r.chain_id) : null,
           poster: r.poster as string,
           description: r.description as string,
           metadataUri: r.metadata_uri as string,
           tags: (r.tags as string[]) ?? [],
           category: (r.category as string) ?? '',
           deadline: Number(r.deadline ?? 0),
-          budget: Number(r.budget ?? 0),
+          budget: Number(r.budget ?? 0) / 1e6,
           status: r.status as unknown as number,
           createdAt: (r.created_at as Date).toISOString(),
           bidCount: bids.length,
@@ -355,8 +414,13 @@ export class FeedService {
     }
 
     const jobsSql = `
+      WITH budget_ranks AS (
+        SELECT id, PERCENT_RANK() OVER (ORDER BY budget) AS budget_percentile
+        FROM jobs
+      )
       SELECT
         j.id,
+        j.chain_id,
         j.poster,
         j.description,
         j.metadata_uri,
@@ -367,11 +431,12 @@ export class FeedService {
         j.status,
         j.created_at,
         COALESCE(bc.bid_count, 0)::int AS bid_count,
-        PERCENT_RANK() OVER (ORDER BY j.budget) AS budget_percentile
+        COALESCE(br.budget_percentile, 0) AS budget_percentile
       FROM jobs j
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS bid_count FROM bids b WHERE b.job_id = j.id
       ) bc ON TRUE
+      LEFT JOIN budget_ranks br ON br.id = j.id
       WHERE j.status = 'open'
         AND j.tags && $1
       ORDER BY ${orderClause}
@@ -456,7 +521,8 @@ export class FeedService {
         const suggestedMax = Math.round(budget * 0.95);
 
         return {
-          id: Number(r.id),
+          id: r.id as string,
+          chainId: r.chain_id ? Number(r.chain_id) : null,
           poster: r.poster as string,
           description: r.description as string,
           metadataUri: r.metadata_uri as string,
@@ -521,12 +587,12 @@ export class FeedService {
     }
 
     if (filters.cursor) {
-      const cur = decodeCursor(filters.cursor);
+      const cur = decodeAgentCursor(filters.cursor);
       if (cur) {
         conditions.push(
           `(a.created_at, a.wallet) < ($${paramIdx}::timestamp, $${paramIdx + 1})`,
         );
-        params.push(cur.createdAt, cur.id.toString());
+        params.push(cur.createdAt, cur.wallet);
         paramIdx += 2;
       }
     }
@@ -609,12 +675,174 @@ export class FeedService {
 
     const nextCursor =
       hasMore && rows.length > 0
-        ? encodeCursor(
+        ? encodeAgentCursor(
             (rows[rows.length - 1].created_at as Date).toISOString(),
-            Number(rows[rows.length - 1].wallet),
+            rows[rows.length - 1].wallet as string,
           )
         : null;
 
     return { items, nextCursor };
+  }
+
+  /**
+   * Full-text search across jobs and/or agents using PostgreSQL tsvector.
+   */
+  async search(
+    filters: SearchFilters,
+  ): Promise<{ items: SearchResultItem[]; nextCursor: string | null }> {
+    const pool = getPool();
+    const limit = Math.min(Math.max(filters.limit ?? 20, 1), 100);
+    const searchType = filters.type ?? 'all';
+    const results: SearchResultItem[] = [];
+
+    // Search jobs
+    if (searchType === 'jobs' || searchType === 'all') {
+      const params: unknown[] = [];
+      const conditions: string[] = [];
+      let paramIdx = 1;
+
+      conditions.push(`j.search_vector @@ plainto_tsquery('english', $${paramIdx})`);
+      params.push(filters.q);
+      paramIdx++;
+
+      if (filters.status) {
+        conditions.push(`j.status = $${paramIdx}`);
+        params.push(filters.status);
+        paramIdx++;
+      }
+
+      if (filters.cursor) {
+        const cur = decodeSearchCursor(filters.cursor);
+        if (cur && cur.kind === 'job') {
+          conditions.push(
+            `(ts_rank(j.search_vector, plainto_tsquery('english', $1)), j.id) < ($${paramIdx}::float, $${paramIdx + 1}::uuid)`,
+          );
+          params.push(cur.rank, cur.id);
+          paramIdx += 2;
+        }
+      }
+
+      const sql = `
+        SELECT
+          j.id,
+          j.description,
+          j.tags,
+          j.status,
+          j.budget,
+          j.category,
+          j.poster,
+          j.created_at,
+          ts_rank(j.search_vector, plainto_tsquery('english', $1)) AS rank,
+          ts_headline('english', j.description, plainto_tsquery('english', $1),
+            'StartSel=<b>, StopSel=</b>, MaxFragments=2, MaxWords=40') AS headline
+        FROM jobs j
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY rank DESC, j.id DESC
+        LIMIT $${paramIdx}
+      `;
+      params.push(limit + 1);
+
+      const res = await pool.query(sql, params);
+      for (const r of res.rows) {
+        results.push({
+          kind: 'job',
+          id: String(r.id),
+          headline: r.headline as string,
+          rank: Number(r.rank),
+          data: {
+            description: r.description,
+            tags: r.tags,
+            status: r.status,
+            budget: r.budget ? String(r.budget) : null,
+            category: r.category,
+            poster: r.poster,
+            createdAt: (r.created_at as Date).toISOString(),
+          },
+        });
+      }
+    }
+
+    // Search agents
+    if (searchType === 'agents' || searchType === 'all') {
+      const params: unknown[] = [];
+      const conditions: string[] = [];
+      let paramIdx = 1;
+
+      conditions.push(`a.search_vector @@ plainto_tsquery('english', $${paramIdx})`);
+      params.push(filters.q);
+      paramIdx++;
+
+      if (filters.status) {
+        conditions.push(`a.status = $${paramIdx}`);
+        params.push(filters.status);
+        paramIdx++;
+      }
+
+      if (filters.cursor) {
+        const cur = decodeSearchCursor(filters.cursor);
+        if (cur && cur.kind === 'agent') {
+          conditions.push(
+            `(ts_rank(a.search_vector, plainto_tsquery('english', $1)), a.wallet) < ($${paramIdx}::float, $${paramIdx + 1})`,
+          );
+          params.push(cur.rank, cur.id);
+          paramIdx += 2;
+        }
+      }
+
+      const sql = `
+        SELECT
+          a.wallet,
+          a.name,
+          a.capabilities,
+          a.status,
+          a.reputation,
+          a.jobs_completed,
+          a.created_at,
+          ts_rank(a.search_vector, plainto_tsquery('english', $1)) AS rank,
+          ts_headline('english', a.name || ' ' || coalesce(array_to_string(a.capabilities, ' '), ''),
+            plainto_tsquery('english', $1),
+            'StartSel=<b>, StopSel=</b>, MaxFragments=2, MaxWords=40') AS headline
+        FROM agents a
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY rank DESC, a.wallet DESC
+        LIMIT $${paramIdx}
+      `;
+      params.push(limit + 1);
+
+      const res = await pool.query(sql, params);
+      for (const r of res.rows) {
+        results.push({
+          kind: 'agent',
+          id: r.wallet as string,
+          headline: r.headline as string,
+          rank: Number(r.rank),
+          data: {
+            name: r.name,
+            capabilities: r.capabilities,
+            status: r.status,
+            reputation: r.reputation ? String(r.reputation) : '0',
+            jobsCompleted: Number(r.jobs_completed ?? 0),
+            createdAt: (r.created_at as Date).toISOString(),
+          },
+        });
+      }
+    }
+
+    // Sort combined results by rank descending
+    results.sort((a, b) => b.rank - a.rank);
+
+    const hasMore = results.length > limit;
+    const trimmed = hasMore ? results.slice(0, limit) : results;
+
+    const nextCursor =
+      hasMore && trimmed.length > 0
+        ? encodeSearchCursor(
+            trimmed[trimmed.length - 1].kind,
+            trimmed[trimmed.length - 1].rank,
+            trimmed[trimmed.length - 1].id,
+          )
+        : null;
+
+    return { items: trimmed, nextCursor };
   }
 }

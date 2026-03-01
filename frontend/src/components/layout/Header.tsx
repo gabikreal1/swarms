@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Menu, X, Github, BookOpen, Zap, LayoutDashboard } from "lucide-react";
+import { Menu, X, Github, BookOpen, Zap, LayoutDashboard, Bot } from "lucide-react";
 import { LINKS } from "@/lib/constants";
 
 const nav = [
+  { label: "Agent", href: LINKS.agent, icon: Bot },
   { label: "Docs", href: LINKS.docs, icon: BookOpen },
   { label: "Admin", href: LINKS.admin, icon: LayoutDashboard },
   { label: "GitHub", href: LINKS.github, icon: Github, external: true },

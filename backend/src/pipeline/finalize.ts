@@ -6,6 +6,8 @@ import {
   SuccessCriterion,
 } from '../types/job-slots';
 import { config } from '../config';
+import { log } from '../lib/logger';
+import { pinata } from '../services/pinata';
 
 // Minimal ABI fragments for encoding calldata
 const ORDERBOOK_ABI = [
@@ -20,8 +22,15 @@ export class FinalizePipeline {
     // 1. Build JobMetadataDocument from finalized slots
     const metadata = this.buildMetadataDocument(request);
 
-    // 2. Pin to IPFS via Pinata
-    const metadataURI = await this.pinToIPFS(metadata);
+    // 2. Pin to IPFS via Pinata (skip if not configured)
+    let metadataURI = '';
+    try {
+      const pinName = `swarms-job-${metadata.title.slice(0, 50)}`;
+      const result = await pinata.pinJSON(metadata, pinName);
+      metadataURI = result.uri;
+    } catch (err) {
+      log.server.warn('IPFS pinning skipped:', (err as Error).message);
+    }
 
     // 3. Determine if criteria-aware or standard job
     const useCriteria = request.acceptedCriteria.length > 0;
@@ -66,33 +75,11 @@ export class FinalizePipeline {
     };
   }
 
-  private async pinToIPFS(metadata: JobMetadataDocument): Promise<string> {
-    if (!config.pinataApiKey || !config.pinataSecretKey) {
-      throw new Error('PINATA_API_KEY and PINATA_SECRET_KEY are required for IPFS pinning');
+  private getOrderBookAddress(): string {
+    if (!config.orderBookAddress) {
+      throw new Error('ORDERBOOK_ADDRESS not configured — cannot generate transaction calldata');
     }
-
-    const response = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        pinata_api_key: config.pinataApiKey,
-        pinata_secret_api_key: config.pinataSecretKey,
-      },
-      body: JSON.stringify({
-        pinataContent: metadata,
-        pinataMetadata: {
-          name: `swarms-job-${metadata.title.slice(0, 50)}`,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Pinata IPFS pinning failed (${response.status}): ${errorBody}`);
-    }
-
-    const result = (await response.json()) as { IpfsHash: string };
-    return `ipfs://${result.IpfsHash}`;
+    return config.orderBookAddress;
   }
 
   private encodePostJob(
@@ -112,7 +99,7 @@ export class FinalizePipeline {
     ]);
 
     return {
-      to: config.orderBookAddress || ethers.ZeroAddress,
+      to: this.getOrderBookAddress(),
       data,
       value: '0',
       chainId: config.chainId,
@@ -154,7 +141,7 @@ export class FinalizePipeline {
     ]);
 
     return {
-      to: config.orderBookAddress || ethers.ZeroAddress,
+      to: this.getOrderBookAddress(),
       data,
       value: '0',
       chainId: config.chainId,

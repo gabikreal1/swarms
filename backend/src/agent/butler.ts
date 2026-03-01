@@ -4,6 +4,8 @@ import { createLLMProvider } from '../llm/factory';
 import { AgentWalletManager } from './wallet';
 import { LLMProvider } from '../llm/types';
 import { config } from '../config';
+import { log } from '../lib/logger';
+import { pinata } from '../services/pinata';
 import { Response } from 'express';
 
 // Minimal ABI fragments for OrderBook interactions
@@ -76,8 +78,8 @@ export class ButlerAgent extends EventEmitter {
           const overlap = jobTags.filter((t: string) => capSet.has(t));
           if (overlap.length === 0) return;
 
-          console.log(
-            `[butler] Job ${jobId} matches capabilities: ${overlap.join(', ')}`,
+          log.tool.info(
+            `Job ${jobId} matches capabilities: ${overlap.join(', ')}`,
           );
 
           const shouldBid = await this.evaluateJob(metadata);
@@ -85,16 +87,16 @@ export class ButlerAgent extends EventEmitter {
             await this.placeBid(Number(jobId), metadata);
           }
         } catch (error) {
-          console.error(
-            `[butler] Error processing job ${jobId}:`,
-            error,
+          log.tool.error(
+            `Error processing job ${jobId}:`,
+            (error as Error).message,
           );
         }
       },
     );
 
-    console.log(
-      `[butler] Monitoring for jobs matching: ${capabilities.join(', ')}`,
+    log.tool.info(
+      `Monitoring for jobs matching: ${capabilities.join(', ')}`,
     );
   }
 
@@ -185,6 +187,26 @@ export class ButlerAgent extends EventEmitter {
 
   private async fetchJobMetadata(jobId: number): Promise<any | null> {
     try {
+      // 1. Try fetching metadata_uri from DB (populated by indexer/contract-sync)
+      try {
+        const { getPool } = require('../db/pool');
+        const pool = getPool();
+        const { rows } = await pool.query(
+          'SELECT metadata_uri, poster, description, tags FROM jobs WHERE chain_id = $1',
+          [jobId],
+        );
+        if (rows[0]?.metadata_uri) {
+          const metadata = await pinata.fetchJSON(rows[0].metadata_uri);
+          return { jobId, poster: rows[0].poster, ...metadata };
+        }
+        if (rows[0]) {
+          return { jobId, poster: rows[0].poster, description: rows[0].description, tags: rows[0].tags || [] };
+        }
+      } catch (err) {
+        log.tool.debug(`DB metadata lookup for job ${jobId} failed, falling back to on-chain:`, (err as Error).message);
+      }
+
+      // 2. Fallback: read on-chain state directly
       const provider = this.walletManager.getProvider();
       const orderBook = new ethers.Contract(
         config.orderBookAddress!,
@@ -194,10 +216,6 @@ export class ButlerAgent extends EventEmitter {
         provider,
       );
       const [jobState] = await orderBook.getJob(jobId);
-
-      // In a production system, the metadataURI would be fetched from the
-      // JobRegistry and the metadata document fetched from IPFS/HTTP.
-      // For now, return a minimal metadata object derived from on-chain data.
       return {
         jobId,
         poster: jobState.poster,
@@ -216,8 +234,8 @@ export class ButlerAgent extends EventEmitter {
 
     const complexity = slots.slots.scope?.value?.complexity;
     if (complexity === 'complex') {
-      console.log(
-        `[butler] Skipping job ${metadata.jobId}: too complex`,
+      log.tool.info(
+        `Skipping job ${metadata.jobId}: too complex`,
       );
       return false;
     }
@@ -242,16 +260,34 @@ export class ButlerAgent extends EventEmitter {
     );
     const deliveryTime = Math.ceil(estimatedHours * 3600); // seconds
 
+    // Pin bid metadata to IPFS
+    let metadataURI = '';
+    try {
+      const bidMetadata = {
+        jobId,
+        estimatedHours,
+        hourlyRate,
+        totalPrice: ethers.formatUnits(price, 6),
+        deliveryTimeSeconds: deliveryTime,
+        bidderCapabilities: [],
+        createdAt: new Date().toISOString(),
+      };
+      const result = await pinata.pinJSON(bidMetadata, `swarms-bid-job-${jobId}`);
+      metadataURI = result.uri;
+    } catch (err) {
+      log.tool.warn(`IPFS pinning for bid metadata skipped:`, (err as Error).message);
+    }
+
     const tx = await this.orderBookContract.placeBid(
       jobId,
       price,
       deliveryTime,
-      '', // metadataURI - would be populated with IPFS link in production
+      metadataURI,
     );
     await tx.wait();
 
-    console.log(
-      `[butler] Bid placed on job ${jobId}: ${ethers.formatUnits(price, 6)} USDC, ${estimatedHours}h delivery`,
+    log.tool.info(
+      `Bid placed on job ${jobId}: ${ethers.formatUnits(price, 6)} USDC, ${estimatedHours}h delivery, metadata=${metadataURI}`,
     );
   }
 
@@ -392,9 +428,17 @@ export class ButlerAgent extends EventEmitter {
         ethers.toUtf8Bytes(evidenceJson),
       );
 
-      // In production: pin manifest + evidence to IPFS via Pinata
-      // const evidenceURI = await this.pinToIpfs(evidenceJson);
-      const evidenceURI = `ipfs://placeholder-${task.jobId}`;
+      // Pin evidence to IPFS
+      let evidenceURI = '';
+      try {
+        const result = await pinata.pinJSON(
+          { evidence: evidenceItems, manifest, proofHash },
+          `swarms-evidence-job-${task.jobId}`,
+        );
+        evidenceURI = result.uri;
+      } catch (err) {
+        log.tool.warn(`IPFS pinning for evidence skipped:`, (err as Error).message);
+      }
 
       // Build a simple Merkle root from evidence hashes
       const leaves = evidenceItems.map((item) =>
@@ -453,7 +497,7 @@ export class ButlerAgent extends EventEmitter {
     }
 
     await tx.wait();
-    console.log(`[butler] Delivery submitted for job ${jobId}`);
+    log.tool.info(`Delivery submitted for job ${jobId}`);
   }
 
   private emitProgress(

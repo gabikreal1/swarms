@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  TouchableOpacity,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,25 +19,13 @@ import { arcTestnet, USDC_ADDRESS, USDC_DECIMALS } from '../../src/config/chains
 import { Section } from '../../src/components/ios/Section';
 import { SectionRow } from '../../src/components/ios/SectionRow';
 import { Button } from '../../src/components/ios/Button';
+import { normalizeStatus, statusLabel, getStatusColor } from '../../src/utils/status';
+import { formatDeadline } from '../../src/utils/deadline';
 
 const publicClient = createPublicClient({
   chain: arcTestnet,
   transport: http(),
 });
-
-const statusToSystemColor: Record<string, string> = {};
-
-function useStatusColor(status: string, colors: any) {
-  const map: Record<string, string> = {
-    OPEN: colors.systemBlue,
-    IN_PROGRESS: colors.systemYellow,
-    DELIVERED: colors.systemIndigo,
-    VALIDATING: colors.systemOrange,
-    COMPLETED: colors.systemGreen,
-    DISPUTED: colors.systemRed,
-  };
-  return map[status] || colors.tertiaryLabel;
-}
 
 export default function HomeTab() {
   const { colors, typography, spacing } = useTheme();
@@ -46,11 +35,12 @@ export default function HomeTab() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [filterMode, setFilterMode] = useState<'all' | 'mine'>('all');
 
   const fetchJobs = useCallback(async () => {
     try {
       const params: Record<string, string> = {};
-      if (wallet?.address) {
+      if (filterMode === 'mine' && wallet?.address) {
         params.poster = wallet.address;
       }
       const result = (await api.getJobFeed(params)) as { jobs: any[] };
@@ -58,7 +48,7 @@ export default function HomeTab() {
     } catch {
       setJobs([]);
     }
-  }, [wallet]);
+  }, [wallet, filterMode]);
 
   const fetchBalance = useCallback(async () => {
     if (!wallet?.address) return;
@@ -159,38 +149,94 @@ export default function HomeTab() {
       {/* Quick Actions */}
       <View style={styles.actions}>
         <Button
-          title="Post Job"
+          title="New Chat"
           variant="tinted"
-          onPress={() => router.push('/(tabs)/post')}
+          onPress={() => router.push('/(tabs)/butler')}
           style={styles.actionBtn}
         />
         <Button
           title="Browse Agents"
           variant="gray"
-          onPress={() => {}}
+          onPress={() => router.push('/agents')}
           style={styles.actionBtn}
         />
       </View>
 
+      {/* Filter Toggle */}
+      <View style={[styles.segmentedControl, { backgroundColor: colors.systemFill }]}>
+        <TouchableOpacity
+          style={[
+            styles.segment,
+            filterMode === 'all' && { backgroundColor: colors.systemBackground },
+          ]}
+          onPress={() => setFilterMode('all')}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              {
+                color: filterMode === 'all' ? colors.label : colors.secondaryLabel,
+                fontWeight: filterMode === 'all' ? '600' : '400',
+              },
+            ]}
+          >
+            All Jobs
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.segment,
+            filterMode === 'mine' && { backgroundColor: colors.systemBackground },
+          ]}
+          onPress={() => setFilterMode('mine')}
+        >
+          <Text
+            style={[
+              styles.segmentText,
+              {
+                color: filterMode === 'mine' ? colors.label : colors.secondaryLabel,
+                fontWeight: filterMode === 'mine' ? '600' : '400',
+              },
+            ]}
+          >
+            My Jobs
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Job List */}
       {jobs.length > 0 ? (
-        <Section header="Active Jobs">
+        <Section header={filterMode === 'mine' ? 'My Jobs' : 'All Marketplace Jobs'}>
           {jobs.map((item, index) => {
             const title = item.title || item.description?.slice(0, 60) || 'Untitled';
-            const status = item.status || 'OPEN';
+            const status = normalizeStatus(item.status);
             const budget = `${item.budget || '0'} USDC`;
-            const deadline = item.deadline
-              ? new Date(item.deadline).toLocaleDateString()
-              : 'No deadline';
+            const bidCount = item.bids?.length || item.bidCount || 0;
+            const statusColor = getStatusColor(status, colors);
+
+            // Build detail string with bid count
+            const detailParts = [budget];
+            if (bidCount > 0) {
+              detailParts.push(`${bidCount} bid${bidCount !== 1 ? 's' : ''}`);
+            }
+            const deadline = formatDeadline(item.deadline);
+            if (deadline !== 'None') detailParts.push(deadline);
 
             return (
               <SectionRow
                 key={item.id}
                 label={title}
-                detail={`${budget} · ${deadline}`}
+                detail={detailParts.join(' · ')}
                 accessory="badge"
-                badgeText={status.replace('_', ' ')}
-                badgeColor={useStatusColor(status, colors)}
+                badgeText={statusLabel(status)}
+                badgeColor={statusColor}
+                icon={
+                  bidCount > 0 && status === 'open' ? (
+                    <View style={[styles.bidCountBadge, { backgroundColor: colors.systemOrange }]}>
+                      <Text style={styles.bidCountText}>{bidCount}</Text>
+                    </View>
+                  ) : undefined
+                }
                 isLast={index === jobs.length - 1}
                 onPress={() => router.push(`/job/${item.id}`)}
               />
@@ -200,7 +246,7 @@ export default function HomeTab() {
       ) : (
         <View style={styles.empty}>
           <Text style={[typography.title3, { color: colors.label, textAlign: 'center' }]}>
-            No jobs yet
+            {filterMode === 'mine' ? 'No jobs posted yet' : 'No jobs yet'}
           </Text>
           <Text
             style={[
@@ -208,12 +254,12 @@ export default function HomeTab() {
               { color: colors.secondaryLabel, textAlign: 'center', marginTop: 4 },
             ]}
           >
-            Post your first job to get started
+            Chat with Butler to post your first job
           </Text>
           <Button
-            title="Post Job"
+            title="New Chat"
             variant="filled"
-            onPress={() => router.push('/(tabs)/post')}
+            onPress={() => router.push('/(tabs)/butler')}
             style={{ marginTop: 20, width: 200 }}
           />
         </View>
@@ -245,6 +291,35 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     flex: 1,
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 4,
+    borderRadius: 8,
+    padding: 2,
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  segmentText: {
+    fontSize: 13,
+  },
+  bidCountBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bidCountText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
   },
   empty: {
     alignItems: 'center',

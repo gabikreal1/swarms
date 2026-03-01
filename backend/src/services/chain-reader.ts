@@ -53,14 +53,19 @@ export class ChainReader {
   private cacheTTL = 15_000; // 15 seconds
 
   constructor() {
-    this.provider = new JsonRpcProvider(config.rpcUrl);
+    const network = new ethers.Network('arc-testnet', 5042002);
+    this.provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
+    // Disable ENS resolution — this chain has no ENS registry
+    this.provider.resolveName = async (name: string) => {
+      try { return ethers.getAddress(name); } catch { return null; }
+    };
     this.jobRegistry = new Contract(
-      config.jobRegistryAddress || '',
+      config.jobRegistryAddress || ethers.ZeroAddress,
       JOB_REGISTRY_ABI,
       this.provider,
     );
     this.orderBook = new Contract(
-      config.orderBookAddress || '',
+      config.orderBookAddress || ethers.ZeroAddress,
       ORDER_BOOK_ABI,
       this.provider,
     );

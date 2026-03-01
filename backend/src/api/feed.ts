@@ -1,10 +1,13 @@
 import { Router, Request, Response } from 'express';
-import { FeedService, FeedFilters } from '../services/feed';
+import { FeedService, FeedFilters, SearchFilters } from '../services/feed';
 import { ChainReader } from '../services/chain-reader';
+import { getPool } from '../db/pool';
 
 const router = Router();
 const feedService = new FeedService();
 const chainReader = new ChainReader();
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ────────────────────────────────────────────────────────────
 // GET /v1/feed/jobs
@@ -167,12 +170,77 @@ router.get('/jobs/recommended', async (req: Request, res: Response) => {
 
 router.get('/jobs/:id', async (req: Request, res: Response) => {
   try {
-    const id = Number(req.params.id);
-    if (Number.isNaN(id)) {
-      res.status(400).json({ error: 'id must be a number' });
+    const idParam = req.params.id as string;
+
+    if (UUID_RE.test(idParam)) {
+      // Lookup by UUID in DB
+      const pool = getPool();
+      const result = await pool.query(
+        `SELECT j.*, COALESCE((SELECT COUNT(*)::int FROM bids b WHERE b.job_id = j.id), 0) AS bid_count
+         FROM jobs j WHERE j.id = $1`,
+        [idParam],
+      );
+      if (result.rows.length > 0) {
+        const r = result.rows[0];
+        res.json({
+          data: {
+            id: r.id,
+            chainId: r.chain_id ? Number(r.chain_id) : null,
+            poster: r.poster,
+            description: r.description,
+            metadataUri: r.metadata_uri,
+            tags: r.tags ?? [],
+            category: r.category ?? '',
+            deadline: Number(r.deadline ?? 0),
+            budget: Number(r.budget ?? 0) / 1e6,
+            status: r.status,
+            createdAt: r.created_at?.toISOString?.() ?? r.created_at,
+            bidCount: r.bid_count,
+          },
+        });
+        return;
+      }
+      res.status(404).json({ error: 'Job not found' });
       return;
     }
-    const job = await chainReader.getJob(id);
+
+    // Numeric: look up by chain_id in DB, fall back to chain reader
+    const numericId = Number(idParam);
+    if (Number.isNaN(numericId)) {
+      res.status(400).json({ error: 'id must be a UUID or number' });
+      return;
+    }
+
+    // Try DB by chain_id first
+    const pool = getPool();
+    const dbResult = await pool.query(
+      `SELECT j.*, COALESCE((SELECT COUNT(*)::int FROM bids b WHERE b.job_id = j.id), 0) AS bid_count
+       FROM jobs j WHERE j.chain_id = $1`,
+      [numericId],
+    );
+    if (dbResult.rows.length > 0) {
+      const r = dbResult.rows[0];
+      res.json({
+        data: {
+          id: r.id,
+          chainId: Number(r.chain_id),
+          poster: r.poster,
+          description: r.description,
+          metadataUri: r.metadata_uri,
+          tags: r.tags ?? [],
+          category: r.category ?? '',
+          deadline: Number(r.deadline ?? 0),
+          budget: Number(r.budget ?? 0),
+          status: r.status,
+          createdAt: r.created_at?.toISOString?.() ?? r.created_at,
+          bidCount: r.bid_count,
+        },
+      });
+      return;
+    }
+
+    // Fall back to chain reader
+    const job = await chainReader.getJob(numericId);
     if (!job) {
       res.status(404).json({ error: 'Job not found' });
       return;
@@ -180,6 +248,62 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
     res.json({ data: job });
   } catch (err) {
     console.error('[feed] GET /jobs/:id error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// GET /v1/feed/search
+//
+// Full-text search across jobs and agents.
+// Query params:
+//   q      - search text (required)
+//   type   - jobs | agents | all (default: all)
+//   status - filter by status string
+//   limit  - page size (default 20, max 100)
+//   cursor - pagination cursor
+// ────────────────────────────────────────────────────────────
+
+router.get('/search', async (req: Request, res: Response) => {
+  try {
+    const q = req.query.q as string | undefined;
+    if (!q || !q.trim()) {
+      res.status(400).json({ error: 'q query parameter is required' });
+      return;
+    }
+
+    const filters: SearchFilters = { q: q.trim() };
+
+    if (req.query.type) {
+      const type = req.query.type as string;
+      if (!['jobs', 'agents', 'all'].includes(type)) {
+        res.status(400).json({ error: 'type must be one of: jobs, agents, all' });
+        return;
+      }
+      filters.type = type as SearchFilters['type'];
+    }
+    if (req.query.status) {
+      filters.status = req.query.status as string;
+    }
+    if (req.query.limit) {
+      filters.limit = Number(req.query.limit);
+      if (Number.isNaN(filters.limit)) {
+        res.status(400).json({ error: 'limit must be a number' });
+        return;
+      }
+    }
+    if (req.query.cursor) {
+      filters.cursor = req.query.cursor as string;
+    }
+
+    const result = await feedService.search(filters);
+    res.json({
+      data: result.items,
+      nextCursor: result.nextCursor,
+      total: result.items.length,
+    });
+  } catch (err) {
+    console.error('[feed] GET /search error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -240,6 +364,36 @@ router.get('/agents', async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('[feed] GET /agents error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// POST /v1/feed/bids/:id/reject
+//
+// Body: { reason?: string }
+// Marks a bid as rejected in the DB (soft status, no on-chain action).
+// ────────────────────────────────────────────────────────────
+
+router.post('/bids/:id/reject', async (req: Request, res: Response) => {
+  try {
+    const bidId = req.params.id;
+    const { reason } = req.body || {};
+    const pool = getPool();
+
+    const { rowCount } = await pool.query(
+      `UPDATE bids SET accepted = FALSE WHERE id = $1 AND accepted = FALSE`,
+      [bidId],
+    );
+
+    if (rowCount === 0) {
+      res.status(404).json({ error: 'Bid not found' });
+      return;
+    }
+
+    res.json({ ok: true, bidId, status: 'rejected', reason: reason || null });
+  } catch (err) {
+    console.error('[feed] POST /bids/:id/reject error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

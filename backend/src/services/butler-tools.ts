@@ -1,4 +1,50 @@
 import { CriteriaCategory, getCriteriaForJobType } from '../validator/owasp-criteria';
+import { FinalizePipeline } from '../pipeline/finalize';
+import { SuccessCriterion } from '../types/job-slots';
+import { getPool } from '../db/pool';
+import { ethers } from 'ethers';
+import { config } from '../config';
+import { log } from '../lib/logger';
+
+const finalizePipeline = new FinalizePipeline();
+
+// ABI fragments for on-chain interactions
+const ACCEPT_BID_ABI = ['function acceptBid(uint256 jobId, uint256 bidId, string responseURI)'];
+const APPROVE_JOB_ABI = ['function approveJob(uint256 jobId)'];
+
+const acceptBidIface = new ethers.Interface(ACCEPT_BID_ABI);
+const approveJobIface = new ethers.Interface(APPROVE_JOB_ABI);
+
+/**
+ * Converts relative deadlines ("2 days", "1 week") and natural dates
+ * ("March 15") into ISO 8601 strings. Falls back to default (14 days).
+ */
+function parseDeadlineToISO(raw: string | undefined): string {
+  if (!raw) return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+
+  // Already a valid ISO date?
+  const directParse = new Date(raw);
+  if (!isNaN(directParse.getTime()) && raw.length > 6) {
+    return directParse.toISOString();
+  }
+
+  // Relative: "2 days", "3 weeks", "1 month"
+  const relMatch = raw.match(/^(\d+)\s*(day|days|week|weeks|month|months|hour|hours)$/i);
+  if (relMatch) {
+    const n = parseInt(relMatch[1], 10);
+    const unit = relMatch[2].toLowerCase().replace(/s$/, '');
+    const ms: Record<string, number> = {
+      hour: 3600 * 1000,
+      day: 24 * 3600 * 1000,
+      week: 7 * 24 * 3600 * 1000,
+      month: 30 * 24 * 3600 * 1000,
+    };
+    return new Date(Date.now() + n * (ms[unit] || ms.day)).toISOString();
+  }
+
+  // Fallback
+  return new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+}
 
 export interface ButlerTool {
   name: string;
@@ -80,10 +126,10 @@ const COMPLEXITY_MULTIPLIER: Record<string, number> = {
   complex: 2.5,
 };
 
-export function executeButlerTool(
+export async function executeButlerTool(
   toolName: string,
   args: Record<string, unknown>,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   switch (toolName) {
     case 'get_job_criteria': {
       const jobType = args.jobType as string;
@@ -135,12 +181,145 @@ export function executeButlerTool(
     }
 
     case 'post_job': {
+      const title = (args.title as string) || 'Untitled Job';
+      const description = (args.description as string) || '';
+      const budget = (args.budget as number) || 0;
+      const deadline = (args.deadline as string) || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+      const criteriaIds = (args.criteria as string[]) || [];
+      const tags = (args.tags as string[]) || [];
+      const category = (args.category as string) || 'general';
+
+      const acceptedCriteria: SuccessCriterion[] = criteriaIds.map((id) => ({
+        id,
+        description: id,
+        measurable: true,
+        source: 'llm_suggested' as const,
+        accepted: true,
+      }));
+
+      const result = await finalizePipeline.finalize({
+        sessionId: `butler-${Date.now()}`,
+        slots: {
+          taskDescription: { value: description, provenance: 'user_explicit', confidence: 1 },
+          deliverableType: { value: category, provenance: 'llm_inferred', confidence: 0.8 },
+          scope: { value: { complexity: 'moderate' }, provenance: 'default', confidence: 0.5 },
+          deadline: { value: deadline, provenance: 'user_explicit', confidence: 1 },
+          budget: { value: { amount: budget, currency: 'USDC' }, provenance: 'user_explicit', confidence: 1 },
+          acceptanceCriteria: { value: [], provenance: 'default', confidence: 0.5 },
+          requiredCapabilities: { value: [], provenance: 'default', confidence: 0.5 },
+          preferredAgentReputation: { value: 0, provenance: 'default', confidence: 0.5 },
+          context: { value: '', provenance: 'default', confidence: 0.5 },
+          exampleOutputs: { value: [], provenance: 'default', confidence: 0.5 },
+        },
+        acceptedCriteria,
+        walletAddress: (args.walletAddress as string) || '0x0000000000000000000000000000000000000000',
+        tags,
+        category,
+      });
+
       return {
         success: true,
-        jobId: Date.now(),
-        title: args.title,
-        category: args.category,
-        status: 'POSTED',
+        title,
+        category,
+        metadataURI: result.metadataURI,
+        transaction: result.transaction,
+        useCriteria: result.useCriteria,
+      };
+    }
+
+    case 'get_my_jobs': {
+      const wallet = args.wallet as string;
+      const status = args.status as string | undefined;
+      const pool = getPool();
+
+      // Debug: log total jobs and distinct posters so we can diagnose wallet mismatches
+      const totalRes = await pool.query(`SELECT count(*) as total FROM jobs`);
+      const postersRes = await pool.query(`SELECT DISTINCT LOWER(poster) as poster FROM jobs LIMIT 10`);
+      log.tool.info(`get_my_jobs: querying wallet=${wallet} total_jobs=${totalRes.rows[0].total} known_posters=[${postersRes.rows.map((r: any) => r.poster).join(', ')}]`);
+
+      let query = `SELECT j.id, j.chain_id, j.description, j.status, j.budget, j.category, j.tags, j.deadline, j.created_at, COUNT(b.id)::int as bid_count FROM jobs j LEFT JOIN bids b ON b.job_id = j.id WHERE LOWER(j.poster) = LOWER($1)`;
+      const params: unknown[] = [wallet];
+      if (status) {
+        query += ` AND j.status = $2`;
+        params.push(status);
+      }
+      query += ` GROUP BY j.id ORDER BY j.created_at DESC LIMIT 20`;
+      const { rows } = await pool.query(query, params);
+      log.tool.info(`get_my_jobs: found ${rows.length} jobs for wallet=${wallet}`);
+      return { jobs: rows };
+    }
+
+    case 'get_job_bids': {
+      const jobId = args.jobId as string;
+      const pool = getPool();
+      const { rows } = await pool.query(
+        `SELECT b.id, b.chain_id, b.bidder, b.price, b.delivery_time, b.reputation, b.accepted, b.metadata_uri, a.name as agent_name FROM bids b LEFT JOIN agents a ON LOWER(a.wallet) = LOWER(b.bidder) WHERE b.job_id = $1 ORDER BY b.price ASC`,
+        [jobId],
+      );
+      return { jobId, bids: rows };
+    }
+
+    case 'accept_bid': {
+      const jobId = args.jobId as string;
+      const bidId = args.bidId as string;
+      const pool = getPool();
+      const jobRow = await pool.query(`SELECT chain_id FROM jobs WHERE id = $1`, [jobId]);
+      const bidRow = await pool.query(`SELECT chain_id, price FROM bids WHERE id = $1`, [bidId]);
+      const chainJobId = jobRow.rows[0]?.chain_id;
+      const chainBidId = bidRow.rows[0]?.chain_id;
+      const bidPrice = bidRow.rows[0]?.price;
+      if (!chainJobId || !chainBidId) {
+        return { error: 'Could not find on-chain IDs for job or bid' };
+      }
+      const data = acceptBidIface.encodeFunctionData('acceptBid', [chainJobId, chainBidId, '']);
+      return {
+        bidId,
+        transaction: {
+          to: config.orderBookAddress,
+          data,
+          value: '0',
+          chainId: config.chainId,
+        },
+        // Tell frontend to approve USDC for escrow before sending
+        approval: {
+          spender: config.escrowAddress,
+          amount: String(bidPrice || 0),
+        },
+      };
+    }
+
+    case 'get_delivery_status': {
+      const jobId = args.jobId as string;
+      const pool = getPool();
+      const { rows } = await pool.query(
+        `SELECT j.id, j.status, j.description, d.proof_hash, d.created_at as delivered_at FROM jobs j LEFT JOIN deliveries d ON d.job_id = j.id WHERE j.id = $1`,
+        [jobId],
+      );
+      if (rows.length === 0) return { error: 'Job not found' };
+      return rows[0];
+    }
+
+    case 'approve_delivery': {
+      const jobId = args.jobId as string;
+      const pool = getPool();
+      const { rows } = await pool.query(`SELECT chain_id, status FROM jobs WHERE id = $1`, [jobId]);
+      if (rows.length === 0) return { error: 'Job not found' };
+      const job = rows[0];
+      if (job.status !== 'delivered') {
+        return { error: `Cannot approve: job status is '${job.status}', expected 'delivered'` };
+      }
+      if (!job.chain_id) {
+        return { error: 'No on-chain ID for this job' };
+      }
+      const data = approveJobIface.encodeFunctionData('approveJob', [job.chain_id]);
+      return {
+        jobId,
+        transaction: {
+          to: config.orderBookAddress,
+          data,
+          value: '0',
+          chainId: config.chainId,
+        },
       };
     }
 

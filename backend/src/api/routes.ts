@@ -64,11 +64,11 @@ const successCriterionSchema = z.object({
 
 const finalizeSchema = z.object({
   sessionId: z.string(),
-  slots: slotsSchema,
-  acceptedCriteria: z.array(successCriterionSchema),
+  slots: slotsSchema.partial().default({}),
+  acceptedCriteria: z.array(successCriterionSchema).default([]),
   walletAddress: z.string().min(1, 'walletAddress is required'),
-  tags: z.array(z.string()),
-  category: z.string(),
+  tags: z.array(z.string()).default([]),
+  category: z.string().default('audit'),
 });
 
 // ---------------------------------------------------------------------------

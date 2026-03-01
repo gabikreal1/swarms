@@ -153,9 +153,11 @@ export function useButlerChat(chatId: string | null) {
 
           switch (data.type) {
             case 'connected':
+              console.log('[SSE] connected');
               break;
 
             case 'block_start':
+              console.log('[SSE] block_start:', data.blockId, data.blockType);
               setAgentTyping(true);
               if (data.blockType === 'text') {
                 setStreamingBlockIds(prev => new Set(prev).add(data.blockId));
@@ -207,12 +209,30 @@ export function useButlerChat(chatId: string | null) {
               scrollToEnd();
               break;
 
-            case 'block_complete':
+            case 'block_complete': {
+              console.log('[SSE] block_complete:', data.blockId, data.block?.type, 'content-len:', data.block?.content?.length ?? 'n/a');
               setStreamingBlockIds(prev => {
                 const next = new Set(prev);
                 next.delete(data.blockId);
                 return next;
               });
+              // Skip empty text blocks — they cause blank space
+              if (data.block?.type === 'text' && !data.block?.content?.trim()) {
+                console.log('[SSE] skipping empty text block:', data.blockId);
+                // Remove the placeholder we added in block_start
+                setMessages((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last && last.role === 'butler' && last.blocks) {
+                    const filtered = last.blocks.filter((b) => b.id !== data.blockId);
+                    return [
+                      ...prev.slice(0, -1),
+                      { ...last, blocks: filtered },
+                    ];
+                  }
+                  return prev;
+                });
+                break;
+              }
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
                 if (last && last.role === 'butler') {
@@ -245,12 +265,15 @@ export function useButlerChat(chatId: string | null) {
               });
               scrollToEnd();
               break;
+            }
 
             case 'phase_change':
+              console.log('[SSE] phase_change:', data.phase);
               setPhase(data.phase);
               break;
 
             case 'done':
+              console.log('[SSE] done:', data.messageId);
               setAgentTyping(false);
               break;
 
@@ -319,20 +342,29 @@ export function useButlerChat(chatId: string | null) {
         tagsResponse: payload.tagsResponse,
       });
 
+      const hadSession = !!sessionId;
+
       if (!sessionId) {
         setSessionId(result.sessionId);
       }
 
       setPhase(result.phase);
 
-      const butlerMsg: Message = {
-        id: result.message.id,
-        role: 'butler',
-        text: '',
-        timestamp: new Date(result.message.timestamp).getTime(),
-        blocks: result.message.blocks,
-      };
-      setMessages((prev) => [...prev, butlerMsg]);
+      // When SSE is already connected (hadSession=true), it builds the
+      // butler message via block_start / block_delta / block_complete —
+      // so we must NOT duplicate it here.
+      // For the first message (greeting), SSE isn't connected yet so
+      // the REST response is the only source of blocks.
+      if (!hadSession && result.message?.blocks?.length) {
+        const butlerMsg: Message = {
+          id: result.message.id,
+          role: 'butler',
+          text: '',
+          timestamp: new Date(result.message.timestamp).getTime(),
+          blocks: result.message.blocks,
+        };
+        setMessages((prev) => [...prev, butlerMsg]);
+      }
       scrollToEnd();
     } catch (err) {
       console.error('[chat] send error:', err);

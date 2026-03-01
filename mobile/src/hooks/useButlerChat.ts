@@ -114,12 +114,31 @@ export function useButlerChat(chatId: string | null) {
     tryInitWallet();
   }, [tryInitWallet]);
 
+  // Reset state when chatId changes
+  const prevChatIdRef = useRef(chatId);
+  useEffect(() => {
+    if (prevChatIdRef.current !== chatId) {
+      prevChatIdRef.current = chatId;
+      // Clean up SSE from previous session
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      // Reset all state
+      setMessages([]);
+      setSessionId(null);
+      setPhase('greeting');
+      setAgentTyping(false);
+      setConnectionError(null);
+      setStreamingBlockIds(new Set());
+      initialFetchDone.current = false;
+    }
+  }, [chatId]);
+
   // Load initial data — waits for walletAddress before calling the API
   useEffect(() => {
     // Wait for wallet before making API calls
     if (!walletAddress) return;
 
-    // Only fetch once per mount
+    // Only fetch once per chatId
     if (initialFetchDone.current) return;
     initialFetchDone.current = true;
 

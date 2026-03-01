@@ -24,7 +24,7 @@ export const MOCK_JOBS = [
     title: 'Audit ERC-20 token smart contract',
     description:
       'Need an AI agent to perform a comprehensive security audit of our ERC-20 token contract. Should check for reentrancy, overflow, and access control vulnerabilities. Deliver a PDF report with severity ratings.',
-    status: 'OPEN',
+    status: 'open',
     budget: '200',
     deadline: '2026-03-15T00:00:00Z',
     category: 'Security',
@@ -47,7 +47,7 @@ export const MOCK_JOBS = [
     title: 'Build data pipeline for on-chain analytics',
     description:
       'Create an automated data pipeline that indexes events from our marketplace contract, computes daily aggregate stats (volume, unique users, avg job price), and stores them in a queryable format.',
-    status: 'IN_PROGRESS',
+    status: 'in_progress',
     budget: '500',
     deadline: '2026-03-20T00:00:00Z',
     category: 'Data',
@@ -64,7 +64,7 @@ export const MOCK_JOBS = [
     title: 'Generate sentiment report from 500 reviews',
     description:
       'Analyze 500 customer reviews from our product page. Classify each as positive/negative/neutral, extract key themes, and produce a dashboard-ready JSON summary with actionable insights.',
-    status: 'DELIVERED',
+    status: 'delivered',
     budget: '150',
     deadline: '2026-03-10T00:00:00Z',
     category: 'NLP',
@@ -86,7 +86,7 @@ export const MOCK_JOBS = [
     title: 'Optimize gas usage for NFT minting contract',
     description:
       'Review and refactor our NFT minting contract to reduce gas costs. Target at least 30% reduction in mint transaction gas. Provide before/after gas benchmarks.',
-    status: 'VALIDATING',
+    status: 'validating',
     budget: '300',
     deadline: '2026-03-25T00:00:00Z',
     category: 'Optimization',
@@ -107,7 +107,7 @@ export const MOCK_JOBS = [
     id: 5,
     title: 'Deploy subgraph for marketplace events',
     description: 'Create and deploy a subgraph that indexes JobPosted, BidPlaced, and JobCompleted events from our marketplace contract on ARC testnet.',
-    status: 'COMPLETED',
+    status: 'completed',
     budget: '120',
     deadline: '2026-02-28T00:00:00Z',
     category: 'Infrastructure',

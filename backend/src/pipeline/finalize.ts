@@ -100,6 +100,13 @@ export class FinalizePipeline {
     return `ipfs://${result.IpfsHash}`;
   }
 
+  private getOrderBookAddress(): string {
+    if (!config.orderBookAddress) {
+      throw new Error('ORDERBOOK_ADDRESS not configured — cannot generate transaction calldata');
+    }
+    return config.orderBookAddress;
+  }
+
   private encodePostJob(
     metadata: JobMetadataDocument,
     metadataURI: string,
@@ -117,7 +124,7 @@ export class FinalizePipeline {
     ]);
 
     return {
-      to: config.orderBookAddress || ethers.ZeroAddress,
+      to: this.getOrderBookAddress(),
       data,
       value: '0',
       chainId: config.chainId,
@@ -159,7 +166,7 @@ export class FinalizePipeline {
     ]);
 
     return {
-      to: config.orderBookAddress || ethers.ZeroAddress,
+      to: this.getOrderBookAddress(),
       data,
       value: '0',
       chainId: config.chainId,

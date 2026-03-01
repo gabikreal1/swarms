@@ -32,7 +32,7 @@ export default function TableBlock({ columns, rows }: TableBlockProps) {
             { borderBottomColor: colors.separator },
           ]}
         >
-          {columns.map((col) => (
+          {(columns || []).map((col) => (
             <View key={col.key} style={styles.cell}>
               <Text
                 style={[
@@ -50,7 +50,7 @@ export default function TableBlock({ columns, rows }: TableBlockProps) {
         </View>
 
         {/* Rows */}
-        {rows.map((row, rowIndex) => (
+        {(rows || []).map((row, rowIndex) => (
           <View
             key={rowIndex}
             style={[
@@ -64,7 +64,7 @@ export default function TableBlock({ columns, rows }: TableBlockProps) {
               },
             ]}
           >
-            {columns.map((col) => (
+            {(columns || []).map((col) => (
               <View key={col.key} style={styles.cell}>
                 <Text
                   style={[

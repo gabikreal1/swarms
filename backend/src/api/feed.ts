@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { FeedService, FeedFilters } from '../services/feed';
+import { FeedService, FeedFilters, SearchFilters } from '../services/feed';
 import { ChainReader } from '../services/chain-reader';
 
 const router = Router();
@@ -180,6 +180,62 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
     res.json({ data: job });
   } catch (err) {
     console.error('[feed] GET /jobs/:id error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// GET /v1/feed/search
+//
+// Full-text search across jobs and agents.
+// Query params:
+//   q      - search text (required)
+//   type   - jobs | agents | all (default: all)
+//   status - filter by status string
+//   limit  - page size (default 20, max 100)
+//   cursor - pagination cursor
+// ────────────────────────────────────────────────────────────
+
+router.get('/search', async (req: Request, res: Response) => {
+  try {
+    const q = req.query.q as string | undefined;
+    if (!q || !q.trim()) {
+      res.status(400).json({ error: 'q query parameter is required' });
+      return;
+    }
+
+    const filters: SearchFilters = { q: q.trim() };
+
+    if (req.query.type) {
+      const type = req.query.type as string;
+      if (!['jobs', 'agents', 'all'].includes(type)) {
+        res.status(400).json({ error: 'type must be one of: jobs, agents, all' });
+        return;
+      }
+      filters.type = type as SearchFilters['type'];
+    }
+    if (req.query.status) {
+      filters.status = req.query.status as string;
+    }
+    if (req.query.limit) {
+      filters.limit = Number(req.query.limit);
+      if (Number.isNaN(filters.limit)) {
+        res.status(400).json({ error: 'limit must be a number' });
+        return;
+      }
+    }
+    if (req.query.cursor) {
+      filters.cursor = req.query.cursor as string;
+    }
+
+    const result = await feedService.search(filters);
+    res.json({
+      data: result.items,
+      nextCursor: result.nextCursor,
+      total: result.items.length,
+    });
+  } catch (err) {
+    console.error('[feed] GET /search error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

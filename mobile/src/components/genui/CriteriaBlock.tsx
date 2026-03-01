@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -44,17 +44,22 @@ export default function CriteriaBlock({
 }: CriteriaBlockProps) {
   const { colors } = useTheme();
 
+  const safeCriteria = criteria || [];
   const [selected, setSelected] = useState<Set<string>>(() => {
     const initial = new Set<string>();
-    criteria.forEach((c) => {
+    safeCriteria.forEach((c) => {
       if (c.preselected) initial.add(c.id);
     });
     return initial;
   });
   const [customItems, setCustomItems] = useState<string[]>([]);
   const [customInput, setCustomInput] = useState('');
+  const prevEmitRef = useRef<string>('');
 
   useEffect(() => {
+    const key = JSON.stringify([Array.from(selected).sort(), customItems]);
+    if (key === prevEmitRef.current) return;
+    prevEmitRef.current = key;
     onCriteriaChange(Array.from(selected), customItems.length > 0 ? customItems : undefined);
   }, [selected, customItems]);
 
@@ -79,7 +84,7 @@ export default function CriteriaBlock({
 
   return (
     <View style={styles.container}>
-      {criteria.map((item) => {
+      {safeCriteria.map((item) => {
         const isChecked = selected.has(item.id);
         return (
           <TouchableOpacity

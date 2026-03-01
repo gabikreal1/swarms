@@ -1,4 +1,8 @@
 import { CriteriaCategory, getCriteriaForJobType } from '../validator/owasp-criteria';
+import { FinalizePipeline } from '../pipeline/finalize';
+import { SuccessCriterion } from '../types/job-slots';
+
+const finalizePipeline = new FinalizePipeline();
 
 export interface ButlerTool {
   name: string;
@@ -80,10 +84,10 @@ const COMPLEXITY_MULTIPLIER: Record<string, number> = {
   complex: 2.5,
 };
 
-export function executeButlerTool(
+export async function executeButlerTool(
   toolName: string,
   args: Record<string, unknown>,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   switch (toolName) {
     case 'get_job_criteria': {
       const jobType = args.jobType as string;
@@ -135,12 +139,49 @@ export function executeButlerTool(
     }
 
     case 'post_job': {
+      const title = (args.title as string) || 'Untitled Job';
+      const description = (args.description as string) || '';
+      const budget = (args.budget as number) || 0;
+      const deadline = (args.deadline as string) || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+      const criteriaIds = (args.criteria as string[]) || [];
+      const tags = (args.tags as string[]) || [];
+      const category = (args.category as string) || 'general';
+
+      const acceptedCriteria: SuccessCriterion[] = criteriaIds.map((id) => ({
+        id,
+        description: id,
+        measurable: true,
+        source: 'llm_suggested' as const,
+        accepted: true,
+      }));
+
+      const result = await finalizePipeline.finalize({
+        sessionId: `butler-${Date.now()}`,
+        slots: {
+          taskDescription: { value: description, provenance: 'user_explicit', confidence: 1 },
+          deliverableType: { value: category, provenance: 'llm_inferred', confidence: 0.8 },
+          scope: { value: { complexity: 'moderate' }, provenance: 'default', confidence: 0.5 },
+          deadline: { value: deadline, provenance: 'user_explicit', confidence: 1 },
+          budget: { value: { amount: budget, currency: 'USDC' }, provenance: 'user_explicit', confidence: 1 },
+          acceptanceCriteria: { value: [], provenance: 'default', confidence: 0.5 },
+          requiredCapabilities: { value: [], provenance: 'default', confidence: 0.5 },
+          preferredAgentReputation: { value: 0, provenance: 'default', confidence: 0.5 },
+          context: { value: '', provenance: 'default', confidence: 0.5 },
+          exampleOutputs: { value: [], provenance: 'default', confidence: 0.5 },
+        },
+        acceptedCriteria,
+        walletAddress: '0x0000000000000000000000000000000000000000',
+        tags,
+        category,
+      });
+
       return {
         success: true,
-        jobId: Date.now(),
-        title: args.title,
-        category: args.category,
-        status: 'POSTED',
+        title,
+        category,
+        metadataURI: result.metadataURI,
+        transaction: result.transaction,
+        useCriteria: result.useCriteria,
       };
     }
 

@@ -4,7 +4,8 @@ import type { JobSlots, SuccessCriterion } from './job-slots';
 
 export type GenUIBlockType =
   | 'text' | 'code' | 'card' | 'form' | 'criteria' | 'tags'
-  | 'action' | 'progress' | 'table' | 'findings' | 'chart' | 'diff';
+  | 'action' | 'progress' | 'table' | 'findings' | 'chart' | 'diff'
+  | 'transaction';
 
 interface BaseBlock {
   id: string;
@@ -155,10 +156,18 @@ export interface DiffBlock extends BaseBlock {
   filename?: string;
 }
 
+export interface TransactionBlock extends BaseBlock {
+  type: 'transaction';
+  transaction: { to: string; data: string; value: string; chainId: number };
+  title?: string;
+  budget?: number;
+  criteriaCount?: number;
+}
+
 export type GenUIBlock =
   | TextBlock | CodeBlock | CardBlock | FormBlock | CriteriaBlock
   | TagsBlock | ActionBlock | ProgressBlock | TableBlock
-  | FindingsBlock | ChartBlock | DiffBlock;
+  | FindingsBlock | ChartBlock | DiffBlock | TransactionBlock;
 
 // ── Session Phases ────────────────────────────────────────
 
@@ -204,6 +213,10 @@ export interface SessionContext {
   deliveryProofHash?: string;
   validationReport?: Record<string, unknown>;
   paymentTxHash?: string;
+  description?: string;
+  budget?: string;
+  deadline?: string;
+  complexity?: string;
 }
 
 export interface ConversationSession {

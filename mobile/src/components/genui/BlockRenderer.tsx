@@ -6,6 +6,7 @@ import FormBlock from './FormBlock';
 import TableBlock from './TableBlock';
 import CriteriaBlock from './CriteriaBlock';
 import TagsBlock from './TagsBlock';
+import TransactionBlock from './TransactionBlock';
 
 interface BlockRendererProps {
   block: {
@@ -28,12 +29,12 @@ export default function BlockRenderer({
 }: BlockRendererProps) {
   switch (block.type) {
     case 'text':
-      return <TextBlock content={block.content} />;
+      return <TextBlock content={block.content || ''} />;
 
     case 'action':
       return (
         <ActionBlock
-          actions={block.actions}
+          actions={block.actions || []}
           layout={block.layout}
           onAction={onAction}
         />
@@ -43,7 +44,7 @@ export default function BlockRenderer({
       return (
         <FormBlock
           formId={block.formId}
-          fields={block.fields}
+          fields={block.fields || []}
           submitLabel={block.submitLabel}
           cancelLabel={block.cancelLabel}
           onFormSubmit={onFormSubmit}
@@ -51,12 +52,12 @@ export default function BlockRenderer({
       );
 
     case 'table':
-      return <TableBlock columns={block.columns} rows={block.rows} />;
+      return <TableBlock columns={block.columns || []} rows={block.rows || []} />;
 
     case 'criteria':
       return (
         <CriteriaBlock
-          criteria={block.criteria}
+          criteria={block.criteria || []}
           allowCustom={block.allowCustom}
           onCriteriaChange={onCriteriaChange}
         />
@@ -65,10 +66,23 @@ export default function BlockRenderer({
     case 'tags':
       return (
         <TagsBlock
-          suggested={block.suggested}
-          selected={block.selected}
+          suggested={block.suggested || []}
+          selected={block.selected || []}
           allowCustom={block.allowCustom}
           onTagsChange={onTagsChange}
+        />
+      );
+
+    case 'transaction':
+      return (
+        <TransactionBlock
+          transaction={block.transaction}
+          title={block.title}
+          budget={block.budget}
+          criteriaCount={block.criteriaCount}
+          onConfirmed={(txHash) => {
+            onAction('tx-confirmed', undefined, { txHash });
+          }}
         />
       );
 

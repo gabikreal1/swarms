@@ -15,6 +15,7 @@ import {
   getLastBlock,
   setLastBlock,
 } from "../db/queries";
+import { streamService, StreamEvent } from "../services/stream";
 
 // ────────────────────────────────────────────────────────────
 // Minimal ABIs (event signatures only)
@@ -125,6 +126,10 @@ export class EventListener {
     this.escrowContract = new Contract(config.escrowAddress, ESCROW_ABI, this.provider);
     this.jobRegistryReader = new Contract(config.jobRegistryAddress, JOB_REGISTRY_READ_ABI, this.provider);
     this.orderBookReader = new Contract(config.orderBookAddress, ORDER_BOOK_READ_ABI, this.provider);
+  }
+
+  private broadcastEvent(type: StreamEvent["type"], data: Record<string, unknown>): void {
+    streamService.broadcast({ type, data, timestamp: new Date().toISOString() });
   }
 
   async start(): Promise<void> {
@@ -244,24 +249,32 @@ export class EventListener {
     const blockNumber = BigInt(log.blockNumber);
     const txHash = log.transactionHash;
 
-    switch (`${contractName}:${parsed.name}`) {
+    const key = `${contractName}:${parsed.name}`;
+
+    switch (key) {
       case "OrderBook:JobPosted":
         await this.handleJobPosted(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.posted", { jobId: Number(parsed.args[0]), poster: parsed.args[1] });
         break;
       case "OrderBook:BidPlaced":
         await this.handleBidPlaced(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.bid_placed", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]), bidder: parsed.args[2], price: parsed.args[3].toString() });
         break;
       case "OrderBook:BidAccepted":
         await this.handleBidAccepted(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.bid_accepted", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]), poster: parsed.args[2], agent: parsed.args[3] });
         break;
       case "OrderBook:DeliverySubmitted":
         await this.handleDeliverySubmitted(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.delivered", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]), proofHash: parsed.args[2] });
         break;
       case "OrderBook:JobApproved":
         await this.handleJobApproved(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.completed", { jobId: Number(parsed.args[0]), bidId: Number(parsed.args[1]) });
         break;
       case "OrderBook:DisputeRaised":
         await this.handleDisputeRaised(parsed.args, blockNumber, txHash);
+        this.broadcastEvent("job.disputed", { disputeId: Number(parsed.args[0]), jobId: Number(parsed.args[1]), initiator: parsed.args[2], reason: parsed.args[3] });
         break;
       case "OrderBook:DisputeResolved":
         await this.handleDisputeResolved(parsed.args, blockNumber, txHash);

@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -73,6 +74,7 @@ export default function ChatScreen() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [phase, setPhase] = useState<string>('greeting');
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [walletReady, setWalletReady] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const mockReplyIndex = useRef(0);
   const eventSourceRef = useRef<any>(null);
@@ -93,6 +95,8 @@ export default function ChatScreen() {
         setWalletAddress(w.address);
       } catch (e: any) {
         console.error('[chat] wallet init failed:', e?.message);
+      } finally {
+        setWalletReady(true);
       }
     })();
   }, []);
@@ -301,7 +305,7 @@ export default function ChatScreen() {
     tagsResponse?: { selectedTags: string[] };
   }) => {
     if (!walletAddress && !USE_MOCKS) {
-      console.warn('[chat] No wallet address yet');
+      Alert.alert('Wallet Not Ready', 'Please wait for the wallet to connect before sending messages.');
       return;
     }
 
@@ -742,15 +746,25 @@ export default function ChatScreen() {
             styles.sendBtn,
             {
               backgroundColor: colors.tint,
-              opacity: input.trim() ? 1 : 0.4,
+              opacity: input.trim() && (walletReady || USE_MOCKS) ? 1 : 0.4,
             },
           ]}
           onPress={sendTextMessage}
-          disabled={!input.trim()}
+          disabled={!input.trim() || (!walletReady && !USE_MOCKS)}
         >
           <Ionicons name="arrow-up" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
+
+      {/* Wallet status indicator */}
+      {!walletReady && !USE_MOCKS && (
+        <View style={[styles.walletBar, { backgroundColor: colors.systemOrange + '22' }]}>
+          <ActivityIndicator size="small" color={colors.systemOrange} />
+          <Text style={[typography.caption2, { color: colors.systemOrange, marginLeft: 6 }]}>
+            Connecting wallet...
+          </Text>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -832,5 +846,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  walletBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
   },
 });

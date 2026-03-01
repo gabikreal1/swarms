@@ -32,6 +32,12 @@ mobile/android/
 # Claude Code
 .claude/worktrees/
 
+# Cache
+.cache/
+
+# Video output
+video/out/
+
 # Misc
 *.log
 coverage/

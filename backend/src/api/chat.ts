@@ -1,5 +1,7 @@
+/// <reference path="../types/express.d.ts" />
 import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
+import { z } from 'zod';
 import type {
   ChatRequest,
   ChatResponse,
@@ -21,6 +23,33 @@ import { updateContextFromToolResult } from '../services/butler-chat';
 import { getButlerSystemPrompt } from '../llm/butler-prompts';
 import { createLLMProvider } from '../llm/factory';
 import { LLMProvider } from '../llm/types';
+import { FinalizePipeline } from '../pipeline/finalize';
+import { validateBody } from './middleware';
+import { optionalAuth } from './auth';
+
+const finalizePipeline = new FinalizePipeline();
+
+export const chatMessageSchema = z.object({
+  walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+  message: z.string().max(2000).optional(),
+  sessionId: z.string().uuid().optional(),
+  formResponse: z.object({
+    formId: z.string(),
+    values: z.record(z.string()),
+  }).optional(),
+  actionResponse: z.object({
+    actionId: z.string(),
+    toolCall: z.string().optional(),
+    toolArgs: z.record(z.unknown()).optional(),
+  }).optional(),
+  criteriaResponse: z.object({
+    selectedIds: z.array(z.string()),
+    customCriteria: z.array(z.string()).optional(),
+  }).optional(),
+  tagsResponse: z.object({
+    selectedTags: z.array(z.string()),
+  }).optional(),
+});
 
 const router = Router();
 
@@ -245,15 +274,12 @@ function buildCriteriaBlocks(
 // POST /v1/chat/message
 // ────────────────────────────────────────────────────────────
 
-router.post('/message', async (req: Request, res: Response) => {
+router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (req: Request, res: Response) => {
   try {
     const body = req.body as ChatRequest;
-    const { walletAddress, message } = body;
-
-    if (!walletAddress) {
-      res.status(400).json({ error: 'walletAddress is required' });
-      return;
-    }
+    // Use authenticated wallet if available, fall back to body for unauthenticated clients
+    const walletAddress = req.walletAddress || body.walletAddress;
+    const { message } = body;
 
     // Get or create session
     let sessionId = body.sessionId || uuid();
@@ -303,7 +329,7 @@ router.post('/message', async (req: Request, res: Response) => {
           nextPhase = 'clarification';
         } else if (message) {
           // User typed a message — infer job type
-          const toolResult = executeButlerTool('analyze_requirements', { description: message });
+          const toolResult = await executeButlerTool('analyze_requirements', { description: message });
           updatedContext.jobType = (toolResult.jobType as string) as any;
           responseBlocks = buildClarificationBlocks(updatedContext.jobType);
           nextPhase = 'clarification';
@@ -319,7 +345,7 @@ router.post('/message', async (req: Request, res: Response) => {
           const values = body.formResponse!.values;
 
           // Run analyze_requirements tool
-          const analysisResult = executeButlerTool('analyze_requirements', {
+          const analysisResult = await executeButlerTool('analyze_requirements', {
             description: values.description || '',
           });
           updatedContext = updateContextFromToolResult(
@@ -329,25 +355,36 @@ router.post('/message', async (req: Request, res: Response) => {
           );
 
           // Run cost estimation
-          const costResult = executeButlerTool('estimate_cost', {
+          const costResult = await executeButlerTool('estimate_cost', {
             jobType: analysisResult.jobType || values.jobType,
             complexity: analysisResult.complexity,
           });
 
-          responseBlocks = buildAnalysisBlocks(analysisResult, costResult);
-          nextPhase = 'analysis';
-
-          // Store form values in context
-          if (values.budget) {
-            updatedContext.slots = {
-              ...updatedContext.slots,
-              budget: {
-                value: values.budget,
-                provenance: 'user_explicit',
-                confidence: 1,
-              },
-            } as any;
+          // Store all form values in context
+          if (values.description) {
+            updatedContext.description = values.description;
           }
+          if (values.budget) {
+            updatedContext.budget = values.budget;
+          }
+          if (values.deadline) {
+            updatedContext.deadline = values.deadline;
+          }
+          if (values.jobType) {
+            updatedContext.jobType = values.jobType as any;
+          }
+
+          // Get criteria + tags in the same response so user can act
+          const jobType = analysisResult.jobType || values.jobType || updatedContext.jobType || 'audit';
+          const criteriaResult = await executeButlerTool('get_job_criteria', { jobType });
+          const tags = (analysisResult.suggestedTags as string[]) || [];
+
+          // Combine analysis table + criteria selection into one response
+          responseBlocks = [
+            ...buildAnalysisBlocks(analysisResult, costResult),
+            ...buildCriteriaBlocks(criteriaResult, tags),
+          ];
+          nextPhase = 'criteria_selection';
         } else {
           responseBlocks = buildClarificationBlocks(updatedContext.jobType);
         }
@@ -355,13 +392,13 @@ router.post('/message', async (req: Request, res: Response) => {
       }
 
       case 'analysis': {
-        // Auto-advance to criteria selection
+        // Fallback if session got stuck in analysis phase
         const jobType = updatedContext.jobType || 'audit';
-        const criteriaResult = executeButlerTool('get_job_criteria', {
+        const criteriaResult = await executeButlerTool('get_job_criteria', {
           jobType,
         });
 
-        const analysisResult = executeButlerTool('analyze_requirements', {
+        const analysisResult = await executeButlerTool('analyze_requirements', {
           description: message || jobType,
         });
         const tags = (analysisResult.suggestedTags as string[]) || [];
@@ -377,34 +414,106 @@ router.post('/message', async (req: Request, res: Response) => {
             updatedContext.selectedCriteria = body.criteriaResponse.selectedIds;
           }
 
-          // Post the job
-          const postResult = executeButlerTool('post_job', {
-            title: `${updatedContext.jobType || 'General'} Job`,
-            description: message || 'Job posted via butler',
-            budget: 100,
-            deadline: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
-            criteria: updatedContext.selectedCriteria || [],
-            tags: body.tagsResponse?.selectedTags || [],
-            category: updatedContext.jobType || 'general',
-          });
+          // Build finalize request from accumulated context
+          const selectedTags = body.tagsResponse?.selectedTags || [];
+          const jobType = updatedContext.jobType || 'general';
+          const description = (updatedContext.slots as any)?.description
+            || (updatedContext as any).description
+            || message
+            || `${jobType} job`;
+          const budgetRaw = (updatedContext.slots as any)?.budget?.value
+            || (updatedContext as any).budget;
+          const budgetAmount = typeof budgetRaw === 'object' ? budgetRaw.amount : (parseFloat(budgetRaw) || 100);
+          const deadlineRaw = (updatedContext.slots as any)?.deadline?.value
+            || (updatedContext as any).deadline;
+          const deadlineISO = deadlineRaw
+            || new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
 
-          updatedContext = updateContextFromToolResult(
-            updatedContext,
-            'post_job',
-            postResult,
-          );
+          // Get full criteria objects for the selected IDs
+          const criteriaResult = await executeButlerTool('get_job_criteria', { jobType });
+          const allCriteria = (criteriaResult.criteria as any[]) || [];
+          const selectedIds = new Set(updatedContext.selectedCriteria || []);
+          const acceptedCriteria = allCriteria
+            .filter((c: any) => selectedIds.has(c.id))
+            .map((c: any) => ({
+              id: c.id,
+              description: c.description || c.name,
+              measurable: true,
+              source: 'llm_suggested' as const,
+              accepted: true,
+            }));
 
+          try {
+            const finalizeResult = await finalizePipeline.finalize({
+              sessionId,
+              slots: {
+                taskDescription: { value: description, provenance: 'user_explicit', confidence: 1 },
+                deliverableType: { value: jobType, provenance: 'llm_inferred', confidence: 0.8 },
+                scope: { value: { complexity: (updatedContext as any).complexity || 'moderate' }, provenance: 'llm_inferred', confidence: 0.7 },
+                deadline: { value: deadlineISO, provenance: deadlineRaw ? 'user_explicit' : 'default', confidence: deadlineRaw ? 1 : 0.5 },
+                budget: { value: { amount: budgetAmount, currency: 'USDC' }, provenance: budgetRaw ? 'user_explicit' : 'default', confidence: budgetRaw ? 1 : 0.5 },
+                acceptanceCriteria: { value: [], provenance: 'default', confidence: 0.5 },
+                requiredCapabilities: { value: [], provenance: 'default', confidence: 0.5 },
+                preferredAgentReputation: { value: 0, provenance: 'default', confidence: 0.5 },
+                context: { value: '', provenance: 'default', confidence: 0.5 },
+                exampleOutputs: { value: [], provenance: 'default', confidence: 0.5 },
+              },
+              acceptedCriteria,
+              walletAddress,
+              tags: selectedTags,
+              category: jobType,
+            });
+
+            responseBlocks = [
+              {
+                id: `text-${uuid().slice(0, 8)}`,
+                type: 'text',
+                content: `Your job is ready to post! Please sign the transaction to publish it on-chain.`,
+              } as GenUIBlock,
+              {
+                id: `tx-${uuid().slice(0, 8)}`,
+                type: 'transaction',
+                transaction: finalizeResult.transaction,
+                title: description.slice(0, 80),
+                budget: budgetAmount,
+                criteriaCount: acceptedCriteria.length,
+              } as GenUIBlock,
+            ];
+            nextPhase = 'posting';
+          } catch (err) {
+            console.error('[chat] finalize error:', err);
+            responseBlocks = [
+              {
+                id: `text-${uuid().slice(0, 8)}`,
+                type: 'text',
+                content: `There was an error preparing your transaction: ${(err as Error).message}. Please try again.`,
+              } as GenUIBlock,
+            ];
+          }
+        } else {
+          // Show criteria again
+          const jobType = updatedContext.jobType || 'audit';
+          const criteriaResult = await executeButlerTool('get_job_criteria', { jobType });
+          const tags = ((await executeButlerTool('analyze_requirements', { description: jobType })).suggestedTags as string[]) || [];
+          responseBlocks = buildCriteriaBlocks(criteriaResult, tags);
+        }
+        break;
+      }
+
+      case 'posting': {
+        // Client reports transaction result
+        if (hasActionResponse && body.actionResponse!.actionId === 'tx-confirmed') {
+          const txHash = body.actionResponse!.toolArgs?.txHash as string || '';
           responseBlocks = [
             {
               id: `text-${uuid().slice(0, 8)}`,
               type: 'text',
-              content: `Your job has been posted to the marketplace! Job ID: **${postResult.jobId}**. I'll notify you when agents start bidding.`,
+              content: `Your job has been posted on-chain! Transaction: **${txHash.slice(0, 10)}...**\n\nI'll notify you when agents start bidding.`,
             } as GenUIBlock,
             {
               id: `action-${uuid().slice(0, 8)}`,
               type: 'action',
               actions: [
-                { id: 'view-job', label: 'View Job', variant: 'primary' },
                 { id: 'post-another', label: 'Post Another Job', variant: 'outline' },
               ],
               layout: 'horizontal',
@@ -412,11 +521,13 @@ router.post('/message', async (req: Request, res: Response) => {
           ];
           nextPhase = 'awaiting_bids';
         } else {
-          // Show criteria again
-          const jobType = updatedContext.jobType || 'audit';
-          const criteriaResult = executeButlerTool('get_job_criteria', { jobType });
-          const tags = (executeButlerTool('analyze_requirements', { description: jobType }).suggestedTags as string[]) || [];
-          responseBlocks = buildCriteriaBlocks(criteriaResult, tags);
+          responseBlocks = [
+            {
+              id: `text-${uuid().slice(0, 8)}`,
+              type: 'text',
+              content: 'Please sign the transaction to post your job.',
+            } as GenUIBlock,
+          ];
         }
         break;
       }
@@ -526,12 +637,9 @@ router.get('/:sessionId/stream', (req: Request, res: Response) => {
 // GET /v1/chat/sessions?wallet=0x...
 // ────────────────────────────────────────────────────────────
 
-router.get('/sessions', async (req: Request, res: Response) => {
-  const wallet = req.query.wallet as string;
-  if (!wallet) {
-    res.status(400).json({ error: 'wallet query parameter is required' });
-    return;
-  }
+router.get('/sessions', optionalAuth, async (req: Request, res: Response) => {
+  // Use authenticated wallet if available, fall back to query param
+  const wallet = req.walletAddress || (req.query.wallet as string);
 
   try {
     const sessions = await getSessionsByWallet(wallet);
@@ -546,7 +654,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
 // GET /v1/chat/:sessionId
 // ────────────────────────────────────────────────────────────
 
-router.get('/:sessionId', async (req: Request, res: Response) => {
+router.get('/:sessionId', optionalAuth, async (req: Request, res: Response) => {
   const sessionId = req.params.sessionId as string;
 
   try {
@@ -555,6 +663,13 @@ router.get('/:sessionId', async (req: Request, res: Response) => {
       res.status(404).json({ error: 'Session not found' });
       return;
     }
+
+    // If authenticated, verify session ownership
+    if (req.walletAddress && session.walletAddress.toLowerCase() !== req.walletAddress) {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+
     res.json(session);
   } catch (err) {
     console.error('[chat] get session error:', err);

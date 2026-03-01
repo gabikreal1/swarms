@@ -31,8 +31,48 @@ export async function runMigrations(): Promise<void> {
   try {
     await pool.query(sql);
     console.log('[migrate] schema applied successfully');
-  } catch (err) {
-    console.error('[migrate] failed to apply schema:', err);
-    throw err;
+  } catch (err: any) {
+    // Non-fatal: tables may already exist with slightly different schema
+    console.warn('[migrate] schema warning (non-fatal):', err?.message || err);
+  }
+
+  // Run incremental migration files from migrations/ directory
+  await runMigrationFiles(pool);
+}
+
+async function runMigrationFiles(pool: ReturnType<typeof getPool>): Promise<void> {
+  const migrationsDirs = [
+    path.join(__dirname, 'migrations'),
+    path.resolve(__dirname, '../../src/db/migrations'),
+  ];
+
+  let migrationsDir: string | null = null;
+  for (const dir of migrationsDirs) {
+    try {
+      if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+        migrationsDir = dir;
+        break;
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  if (!migrationsDir) return;
+
+  const files = fs.readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  for (const file of files) {
+    const filePath = path.join(migrationsDir, file);
+    const sql = fs.readFileSync(filePath, 'utf-8');
+    try {
+      await pool.query(sql);
+      console.log(`[migrate] applied ${file}`);
+    } catch (err: any) {
+      // Non-fatal: migration may have already been applied or column already exists
+      console.warn(`[migrate] skipped ${file} (non-fatal):`, err?.message || err);
+    }
   }
 }

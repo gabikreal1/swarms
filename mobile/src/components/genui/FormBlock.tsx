@@ -40,7 +40,7 @@ export default function FormBlock({
   const { colors, typography } = useTheme();
 
   const initialValues: Record<string, string> = {};
-  fields.forEach((f) => {
+  (fields || []).forEach((f) => {
     initialValues[f.name] = f.defaultValue || '';
   });
   const [values, setValues] = useState<Record<string, string>>(initialValues);
@@ -51,7 +51,7 @@ export default function FormBlock({
   };
 
   const handleSubmit = () => {
-    const missing = fields
+    const missing = (fields || [])
       .filter((f) => f.required && !values[f.name]?.trim())
       .map((f) => f.label);
     if (missing.length > 0) {
@@ -204,7 +204,7 @@ export default function FormBlock({
 
   return (
     <View style={styles.container}>
-      {fields.map((field) => (
+      {(fields || []).map((field) => (
         <View key={field.name} style={styles.fieldContainer}>
           <View style={styles.labelRow}>
             <Text style={[styles.label, { color: colors.secondaryLabel }]}>

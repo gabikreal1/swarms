@@ -60,6 +60,12 @@ export default function ActionBlock({ actions, layout, onAction }: ActionBlockPr
           text: colors.tint,
           border: colors.tint,
         };
+      default:
+        return {
+          bg: colors.systemFill,
+          text: colors.label,
+          border: 'transparent',
+        };
     }
   };
 
@@ -70,7 +76,7 @@ export default function ActionBlock({ actions, layout, onAction }: ActionBlockPr
         layout === 'horizontal' ? styles.horizontal : styles.vertical,
       ]}
     >
-      {actions.map((action) => {
+      {(actions || []).map((action) => {
         const vs = getVariantStyle(action.variant);
         return (
           <TouchableOpacity

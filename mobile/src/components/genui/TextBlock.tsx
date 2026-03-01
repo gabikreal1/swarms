@@ -35,7 +35,7 @@ function parseLine(line: string, colors: any, key: number) {
 export default function TextBlock({ content }: TextBlockProps) {
   const { colors, typography } = useTheme();
 
-  const lines = content.split('\n');
+  const lines = (content || '').split('\n');
 
   return (
     <View style={styles.container}>

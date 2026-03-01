@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,12 +22,17 @@ export default function TagsBlock({
   onTagsChange,
 }: TagsBlockProps) {
   const { colors } = useTheme();
+  const safeSuggested = suggested || [];
   const [selectedTags, setSelectedTags] = useState<Set<string>>(
-    new Set(initialSelected),
+    new Set(initialSelected || []),
   );
   const [customInput, setCustomInput] = useState('');
+  const prevEmitRef = useRef<string>('');
 
   useEffect(() => {
+    const key = JSON.stringify(Array.from(selectedTags).sort());
+    if (key === prevEmitRef.current) return;
+    prevEmitRef.current = key;
     onTagsChange(Array.from(selectedTags));
   }, [selectedTags]);
 
@@ -45,15 +50,15 @@ export default function TagsBlock({
 
   const addCustomTag = () => {
     const tag = customInput.trim().toLowerCase();
-    if (!tag) return;
+    if (!tag || selectedTags.has(tag)) return;
     setSelectedTags((prev) => new Set(prev).add(tag));
     setCustomInput('');
   };
 
   // Merge suggested and any selected tags that aren't in suggested
   const allTags = [
-    ...suggested,
-    ...Array.from(selectedTags).filter((t) => !suggested.includes(t)),
+    ...safeSuggested,
+    ...Array.from(selectedTags).filter((t) => !safeSuggested.includes(t)),
   ];
 
   return (

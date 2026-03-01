@@ -60,12 +60,12 @@ export class ChainReader {
       try { return ethers.getAddress(name); } catch { return null; }
     };
     this.jobRegistry = new Contract(
-      config.jobRegistryAddress || '',
+      config.jobRegistryAddress || ethers.ZeroAddress,
       JOB_REGISTRY_ABI,
       this.provider,
     );
     this.orderBook = new Contract(
-      config.orderBookAddress || '',
+      config.orderBookAddress || ethers.ZeroAddress,
       ORDER_BOOK_ABI,
       this.provider,
     );

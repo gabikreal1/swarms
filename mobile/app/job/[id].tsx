@@ -21,6 +21,8 @@ import { Section } from '../../src/components/ios/Section';
 import { SectionRow } from '../../src/components/ios/SectionRow';
 import { Button } from '../../src/components/ios/Button';
 import BidCard from '../../src/components/BidCard';
+import { STATUS_STEPS, normalizeStatus, statusLabel, getStatusColor } from '../../src/utils/status';
+import { formatDeadline } from '../../src/utils/deadline';
 
 // Minimal ABI for OrderBook contract actions
 const ORDER_BOOK_ABI = [
@@ -45,7 +47,7 @@ const ORDER_BOOK_ABI = [
   },
 ] as const;
 
-const STATUS_STEPS = ['OPEN', 'IN_PROGRESS', 'DELIVERED', 'VALIDATING', 'COMPLETED'] as const;
+const statusColorMap: Record<string, string> = {};
 
 export default function JobDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -58,6 +60,16 @@ export default function JobDetailScreen() {
   const [txLoading, setTxLoading] = useState<string | null>(null); // bid id or 'approve'
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const autoRefreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Build color map from theme
+  const colorMap: Record<string, string> = {
+    open: colors.systemBlue,
+    in_progress: colors.systemYellow,
+    delivered: colors.systemIndigo,
+    validating: colors.systemOrange,
+    completed: colors.systemGreen,
+    disputed: colors.systemRed,
+  };
 
   // Init wallet to check if user is the poster
   useEffect(() => {
@@ -91,9 +103,10 @@ export default function JobDetailScreen() {
     fetchJob();
   }, [fetchJob]);
 
-  // Auto-refresh every 30s for open jobs
+  // Auto-refresh every 30s for open/in_progress jobs
   useEffect(() => {
-    if (job?.status === 'OPEN' || job?.status === 'IN_PROGRESS') {
+    const s = normalizeStatus(job?.status);
+    if (s === 'open' || s === 'in_progress') {
       autoRefreshTimer.current = setInterval(() => {
         fetchJob();
       }, 30000);
@@ -110,15 +123,6 @@ export default function JobDetailScreen() {
     setRefreshing(true);
     await fetchJob();
     setRefreshing(false);
-  };
-
-  const statusColorMap: Record<string, string> = {
-    OPEN: colors.systemBlue,
-    IN_PROGRESS: colors.systemYellow,
-    DELIVERED: colors.systemIndigo,
-    VALIDATING: colors.systemOrange,
-    COMPLETED: colors.systemGreen,
-    DISPUTED: colors.systemRed,
   };
 
   const isJobPoster = walletAddress && job?.poster &&
@@ -272,7 +276,8 @@ export default function JobDetailScreen() {
     );
   }
 
-  const currentStepIdx = STATUS_STEPS.indexOf(job.status);
+  const jobStatus = normalizeStatus(job.status);
+  const currentStepIdx = STATUS_STEPS.indexOf(jobStatus);
   const bidCount = job.bids?.length || job.bidCount || 0;
 
   return (
@@ -293,7 +298,7 @@ export default function JobDetailScreen() {
           const isActive = i <= currentStepIdx;
           const isCurrent = i === currentStepIdx;
           const color = isActive
-            ? statusColorMap[step] || colors.tint
+            ? colorMap[step] || colors.tint
             : colors.quaternaryLabel;
 
           return (
@@ -322,7 +327,7 @@ export default function JobDetailScreen() {
                   },
                 ]}
               >
-                {step.replace('_', '\n')}
+                {statusLabel(step)}
               </Text>
               {i < STATUS_STEPS.length - 1 && (
                 <View
@@ -355,11 +360,7 @@ export default function JobDetailScreen() {
         />
         <SectionRow
           label="Deadline"
-          value={
-            job.deadline
-              ? new Date(job.deadline).toLocaleDateString()
-              : 'None'
-          }
+          value={formatDeadline(job.deadline)}
           isLast
         />
       </Section>
@@ -385,7 +386,7 @@ export default function JobDetailScreen() {
       )}
 
       {/* Bids */}
-      {(job.status === 'OPEN' || bidCount > 0) && (
+      {(jobStatus === 'open' || bidCount > 0) && (
         <Section header={`Bids (${bidCount})`}>
           {(job.bids || []).length > 0 ? (
             <View style={{ padding: spacing.cellHorizontal }}>
@@ -401,12 +402,12 @@ export default function JobDetailScreen() {
                     reputationScore: bid.reputationScore || bid.reputation || 0,
                     criteriaBitmask: bid.criteriaBitmask,
                     metadataDescription: bid.metadataDescription || bid.description,
-                    status: bid.status || (job.status !== 'OPEN' ? 'accepted' : 'pending'),
+                    status: bid.status || (jobStatus !== 'open' ? 'accepted' : 'pending'),
                   }}
                   totalCriteria={job.criteria?.length || 0}
                   onAccept={() => handleAcceptBid(bid)}
                   onReject={() => handleRejectBid(bid.id)}
-                  showActions={job.status === 'OPEN' && !!isJobPoster}
+                  showActions={jobStatus === 'open' && !!isJobPoster}
                   loading={txLoading === String(bid.id)}
                 />
               ))}
@@ -422,7 +423,7 @@ export default function JobDetailScreen() {
       )}
 
       {/* Delivery */}
-      {(job.status === 'DELIVERED' || job.status === 'VALIDATING') && job.delivery && (
+      {(jobStatus === 'delivered' || jobStatus === 'validating') && job.delivery && (
         <Section header="Delivery">
           <SectionRow
             label="Proof Hash"
@@ -452,7 +453,7 @@ export default function JobDetailScreen() {
 
       {/* Actions */}
       <View style={styles.actions}>
-        {(job.status === 'DELIVERED' || job.status === 'VALIDATING') && (
+        {(jobStatus === 'delivered' || jobStatus === 'validating') && (
           <>
             <Button
               title="Approve Delivery"
@@ -481,7 +482,7 @@ export default function JobDetailScreen() {
           </>
         )}
 
-        {job.status !== 'OPEN' && job.status !== 'COMPLETED' && (
+        {jobStatus !== 'completed' && (
           <>
             <View style={{ height: 10 }} />
             <Button

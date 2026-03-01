@@ -6,30 +6,36 @@
     "dev": "nodemon src/index.ts",
     "build": "tsc && cp src/db/schema.sql dist/db/schema.sql",
     "start": "node dist/index.js",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "seed": "ts-node src/seed/index.ts",
+    "seed:reset": "ts-node src/seed/index.ts --reset",
+    "seed:small": "ts-node src/seed/index.ts --scale small",
+    "seed:large": "ts-node src/seed/index.ts --scale large"
   },
   "dependencies": {
-    "express": "^4.21.0",
-    "cors": "^2.8.5",
-    "helmet": "^8.0.0",
-    "dotenv": "^16.4.5",
-    "zod": "^3.23.0",
-    "@qdrant/js-client-rest": "^1.12.0",
     "@anthropic-ai/sdk": "^0.32.0",
-    "openai": "^4.70.0",
     "@huggingface/transformers": "^3.0.0",
+    "@qdrant/js-client-rest": "^1.12.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "ethers": "^6.13.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.0.0",
+    "openai": "^4.70.0",
+    "pg": "^8.13.0",
+    "siwe": "^3.0.0",
     "uuid": "^10.0.0",
-    "pg": "^8.13.0"
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "@types/express": "^5.0.0",
     "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
-    "@types/uuid": "^10.0.0",
     "@types/pg": "^8.11.0",
+    "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.0",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0"
   }
 }

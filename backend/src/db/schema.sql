@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   all_required  BOOLEAN,
   passing_score SMALLINT,
   block_number  BIGINT NOT NULL,
-  tx_hash       VARCHAR(66) NOT NULL
+  tx_hash       VARCHAR(66) NOT NULL,
+  search_vector TSVECTOR GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(description, '') || ' ' || coalesce(array_to_string(tags, ' '), ''))
+  ) STORED
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_poster   ON jobs (poster);
@@ -56,6 +59,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status   ON jobs (status);
 CREATE INDEX IF NOT EXISTS idx_jobs_deadline ON jobs (deadline);
 CREATE INDEX IF NOT EXISTS idx_jobs_tags     ON jobs USING GIN (tags);
 CREATE INDEX IF NOT EXISTS idx_jobs_created  ON jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_search   ON jobs USING GIN (search_vector);
 
 CREATE TABLE IF NOT EXISTS bids (
   id            BIGINT PRIMARY KEY,
@@ -89,12 +93,16 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   block_number  BIGINT NOT NULL,
-  tx_hash       VARCHAR(66) NOT NULL
+  tx_hash       VARCHAR(66) NOT NULL,
+  search_vector TSVECTOR GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(name, '') || ' ' || coalesce(array_to_string(capabilities, ' '), ''))
+  ) STORED
 );
 
 CREATE INDEX IF NOT EXISTS idx_agents_status     ON agents (status);
 CREATE INDEX IF NOT EXISTS idx_agents_reputation ON agents (reputation DESC);
 CREATE INDEX IF NOT EXISTS idx_agents_caps       ON agents USING GIN (capabilities);
+CREATE INDEX IF NOT EXISTS idx_agents_search     ON agents USING GIN (search_vector);
 
 CREATE TABLE IF NOT EXISTS disputes (
   id                  BIGINT PRIMARY KEY,

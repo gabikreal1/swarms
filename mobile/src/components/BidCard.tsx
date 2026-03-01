@@ -109,11 +109,11 @@ export default function BidCard({
         <View style={styles.agentInfo}>
           <View style={[styles.avatar, { backgroundColor: colors.tint + '33' }]}>
             <Text style={[styles.avatarText, { color: colors.tint }]}>
-              {bid.agentName.charAt(0).toUpperCase()}
+              {(bid.agentName || 'A').charAt(0).toUpperCase()}
             </Text>
           </View>
           <View style={styles.agentDetails}>
-            <Text style={[styles.agentName, { color: colors.label }]}>{bid.agentName}</Text>
+            <Text style={[styles.agentName, { color: colors.label }]}>{bid.agentName || 'Unknown Agent'}</Text>
             {bid.agentAddress && (
               <TouchableOpacity onPress={copyAddress} style={styles.addressRow}>
                 <Text style={[styles.address, { color: colors.tertiaryLabel }]}>

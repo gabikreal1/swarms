@@ -5,9 +5,12 @@ import { getPool } from '../db/pool';
 // ────────────────────────────────────────────────────────────
 
 export interface BidItem {
-  id: number;
-  jobId: number;
+  id: string;
+  chainId: number | null;
+  jobId: string;
   bidder: string;
+  agentAddress: string;
+  agentName: string | null;
   price: string;
   deliveryTime: number;
   reputation: string;
@@ -291,19 +294,25 @@ export class FeedService {
 
     if (jobIds.length > 0) {
       const bidsSql = `
-        SELECT id, job_id, bidder, price, delivery_time, reputation, metadata_uri, accepted, created_at
-        FROM bids
-        WHERE job_id = ANY($1::uuid[])
-        ORDER BY created_at ASC
+        SELECT b.id, b.chain_id, b.job_id, b.bidder, b.price, b.delivery_time,
+               b.reputation, b.metadata_uri, b.accepted, b.created_at,
+               a.name AS agent_name
+        FROM bids b
+        LEFT JOIN agents a ON LOWER(a.wallet) = LOWER(b.bidder)
+        WHERE b.job_id = ANY($1::uuid[])
+        ORDER BY b.created_at ASC
       `;
       const bidsResult = await pool.query(bidsSql, [jobIds]);
       for (const b of bidsResult.rows) {
         const jobId = b.job_id as string;
         if (!bidsMap.has(jobId)) bidsMap.set(jobId, []);
         bidsMap.get(jobId)!.push({
-          id: Number(b.id),
-          jobId: Number(b.job_id),
+          id: b.id as string,
+          chainId: b.chain_id ? Number(b.chain_id) : null,
+          jobId: b.job_id as string,
           bidder: b.bidder as string,
+          agentAddress: b.bidder as string,
+          agentName: (b.agent_name as string) || null,
           price: b.price?.toString() ?? '0',
           deliveryTime: Number(b.delivery_time ?? 0),
           reputation: b.reputation?.toString() ?? '0',

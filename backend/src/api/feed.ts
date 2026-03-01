@@ -172,49 +172,61 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
   try {
     const idParam = req.params.id as string;
 
+    // Shared helper: fetch bids for a job UUID, JOIN agents for names
+    const fetchBidsForJob = async (pool: ReturnType<typeof getPool>, jobUuid: string) => {
+      const bidsResult = await pool.query(
+        `SELECT b.id, b.chain_id, b.bidder, b.price, b.delivery_time,
+                b.reputation, b.metadata_uri, b.accepted, b.created_at,
+                a.name AS agent_name
+         FROM bids b
+         LEFT JOIN agents a ON LOWER(a.wallet) = LOWER(b.bidder)
+         WHERE b.job_id = $1
+         ORDER BY b.created_at`,
+        [jobUuid],
+      );
+      return bidsResult.rows.map((b: Record<string, unknown>) => ({
+        id: b.id as string,
+        chainId: b.chain_id ? Number(b.chain_id) : null,
+        bidder: b.bidder as string,
+        agentAddress: b.bidder as string,
+        agentName: (b.agent_name as string) || null,
+        price: Number(b.price ?? 0),
+        deliveryTime: Number(b.delivery_time ?? 0),
+        reputation: Number(b.reputation ?? 0),
+        metadataUri: (b.metadata_uri as string) ?? '',
+        accepted: (b.accepted as boolean) ?? false,
+        createdAt: (b.created_at as Date)?.toISOString?.() ?? b.created_at,
+      }));
+    };
+
+    // Shared helper: build the job response object
+    const buildJobResponse = (r: Record<string, unknown>, bids: ReturnType<typeof fetchBidsForJob> extends Promise<infer T> ? T : never) => ({
+      id: r.id,
+      chainId: r.chain_id ? Number(r.chain_id) : null,
+      poster: r.poster,
+      description: r.description,
+      metadataUri: r.metadata_uri,
+      tags: r.tags ?? [],
+      category: r.category ?? '',
+      deadline: Number(r.deadline ?? 0),
+      budget: Number(r.budget ?? 0) / 1e6,
+      status: r.status,
+      createdAt: (r.created_at as Date)?.toISOString?.() ?? r.created_at,
+      bidCount: bids.length,
+      bids,
+    });
+
     if (UUID_RE.test(idParam)) {
       // Lookup by UUID in DB
       const pool = getPool();
       const result = await pool.query(
-        `SELECT j.*, COALESCE((SELECT COUNT(*)::int FROM bids b WHERE b.job_id = j.id), 0) AS bid_count
-         FROM jobs j WHERE j.id = $1`,
+        `SELECT j.* FROM jobs j WHERE j.id = $1`,
         [idParam],
       );
       if (result.rows.length > 0) {
         const r = result.rows[0];
-        // Fetch bids for this job
-        const bidsResult = await pool.query(
-          `SELECT chain_id, bidder, price, delivery_time, reputation, metadata_uri, accepted, created_at
-           FROM bids WHERE job_id = $1 ORDER BY created_at`,
-          [r.id],
-        );
-        const bids = bidsResult.rows.map((b: Record<string, unknown>) => ({
-          id: b.chain_id ? Number(b.chain_id) : null,
-          bidder: b.bidder,
-          price: Number(b.price ?? 0),
-          deliveryTime: Number(b.delivery_time ?? 0),
-          reputation: Number(b.reputation ?? 0),
-          metadataUri: b.metadata_uri ?? '',
-          accepted: b.accepted ?? false,
-          createdAt: (b.created_at as Date)?.toISOString?.() ?? b.created_at,
-        }));
-        res.json({
-          data: {
-            id: r.id,
-            chainId: r.chain_id ? Number(r.chain_id) : null,
-            poster: r.poster,
-            description: r.description,
-            metadataUri: r.metadata_uri,
-            tags: r.tags ?? [],
-            category: r.category ?? '',
-            deadline: Number(r.deadline ?? 0),
-            budget: Number(r.budget ?? 0) / 1e6,
-            status: r.status,
-            createdAt: r.created_at?.toISOString?.() ?? r.created_at,
-            bidCount: r.bid_count,
-            bids,
-          },
-        });
+        const bids = await fetchBidsForJob(pool, r.id);
+        res.json({ data: buildJobResponse(r, bids) });
         return;
       }
       res.status(404).json({ error: 'Job not found' });
@@ -231,45 +243,13 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
     // Try DB by chain_id first
     const pool = getPool();
     const dbResult = await pool.query(
-      `SELECT j.*, COALESCE((SELECT COUNT(*)::int FROM bids b WHERE b.job_id = j.id), 0) AS bid_count
-       FROM jobs j WHERE j.chain_id = $1`,
+      `SELECT j.* FROM jobs j WHERE j.chain_id = $1`,
       [numericId],
     );
     if (dbResult.rows.length > 0) {
       const r = dbResult.rows[0];
-      // Fetch bids for this job
-      const bidsResult = await pool.query(
-        `SELECT chain_id, bidder, price, delivery_time, reputation, metadata_uri, accepted, created_at
-         FROM bids WHERE job_id = $1 ORDER BY created_at`,
-        [r.id],
-      );
-      const bids = bidsResult.rows.map((b: Record<string, unknown>) => ({
-        id: b.chain_id ? Number(b.chain_id) : null,
-        bidder: b.bidder,
-        price: Number(b.price ?? 0),
-        deliveryTime: Number(b.delivery_time ?? 0),
-        reputation: Number(b.reputation ?? 0),
-        metadataUri: b.metadata_uri ?? '',
-        accepted: b.accepted ?? false,
-        createdAt: (b.created_at as Date)?.toISOString?.() ?? b.created_at,
-      }));
-      res.json({
-        data: {
-          id: r.id,
-          chainId: Number(r.chain_id),
-          poster: r.poster,
-          description: r.description,
-          metadataUri: r.metadata_uri,
-          tags: r.tags ?? [],
-          category: r.category ?? '',
-          deadline: Number(r.deadline ?? 0),
-          budget: Number(r.budget ?? 0),
-          status: r.status,
-          createdAt: r.created_at?.toISOString?.() ?? r.created_at,
-          bidCount: r.bid_count,
-          bids,
-        },
-      });
+      const bids = await fetchBidsForJob(pool, r.id);
+      res.json({ data: buildJobResponse(r, bids) });
       return;
     }
 

@@ -9,6 +9,7 @@ import type {
   ActionBlock,
   TransactionBlock,
 } from '../types/chat';
+import { pinata } from './pinata';
 
 function blockId(prefix: string): string {
   return `${prefix}-${uuid().slice(0, 8)}`;
@@ -287,6 +288,19 @@ function buildBidsBlocks(result: Record<string, unknown>): GenUIBlock[] {
       sortable: false,
     };
     blocks.push(table);
+
+    // Clickable IPFS link for bid proposal
+    if (b.metadata_uri) {
+      const uri = String(b.metadata_uri);
+      const url = uri.startsWith('ipfs://') ? pinata.getGatewayUrl(uri) : uri;
+      blocks.push({
+        id: blockId('link'),
+        type: 'link',
+        label: `View ${agentName}'s Proposal`,
+        url,
+        icon: 'open-outline',
+      } as GenUIBlock);
+    }
   }
 
   // Action buttons to accept each bid
@@ -349,10 +363,6 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
     { field: 'Delivered At', value: String(result.delivered_at || '-') },
   ];
 
-  if (result.evidenceURI) {
-    rows.push({ field: 'Evidence URI', value: String(result.evidenceURI) });
-  }
-
   const table: TableBlock = {
     id: blockId('table'),
     type: 'table',
@@ -365,7 +375,33 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
   };
   blocks.push(table);
 
-  // Show delivery evidence content if fetched from IPFS
+  // Clickable IPFS link for evidence
+  if (result.evidenceURI) {
+    const uri = String(result.evidenceURI);
+    const url = uri.startsWith('ipfs://') ? pinata.getGatewayUrl(uri) : uri;
+    blocks.push({
+      id: blockId('link'),
+      type: 'link',
+      label: 'View Delivery Evidence',
+      url,
+      icon: 'document-text-outline',
+    } as GenUIBlock);
+  }
+
+  // Clickable IPFS link for job metadata
+  if (result.job_metadata_uri) {
+    const uri = String(result.job_metadata_uri);
+    const url = uri.startsWith('ipfs://') ? pinata.getGatewayUrl(uri) : uri;
+    blocks.push({
+      id: blockId('link'),
+      type: 'link',
+      label: 'View Job Metadata',
+      url,
+      icon: 'folder-open-outline',
+    } as GenUIBlock);
+  }
+
+  // Show delivery evidence summary if fetched from IPFS
   const evidence = result.evidence as Record<string, unknown> | undefined;
   if (evidence) {
     let evidenceText = '';

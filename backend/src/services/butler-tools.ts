@@ -308,7 +308,7 @@ export async function executeButlerTool(
       const jobId = args.jobId as string;
       const pool = getPool();
       const { rows } = await pool.query(
-        `SELECT j.id, j.chain_id, j.status, j.description, j.metadata_uri as job_metadata_uri, d.proof_hash, d.created_at as delivered_at FROM jobs j LEFT JOIN deliveries d ON d.job_id = j.id WHERE j.id = $1`,
+        `SELECT j.id, j.chain_id, j.status, j.description, j.metadata_uri as job_metadata_uri, d.proof_hash, d.delivered_at FROM jobs j LEFT JOIN deliveries d ON d.job_id = j.id WHERE j.id = $1`,
         [jobId],
       );
       if (rows.length === 0) return { error: 'Job not found' };

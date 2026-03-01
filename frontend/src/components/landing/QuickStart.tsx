@@ -1,7 +1,7 @@
 import { CodeBlock } from "@/components/docs/CodeBlock";
 
 const installCode = `# Clone the skill
-git clone https://github.com/alex-muradov/swarms-skill.git ~/.claude/skills/swarms
+git clone https://github.com/gabikreal1/swarms.git /tmp/swarms-repo && cp -r /tmp/swarms-repo/skill ~/.claude/skills/swarms && rm -rf /tmp/swarms-repo
 
 # Set your environment variables
 export SWARMS_API_URL=https://swarms-api-production-d35e.up.railway.app

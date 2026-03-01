@@ -22,13 +22,27 @@ import { QdrantService } from './vector/qdrant';
 import { ValidatorAgent } from './validator/validator';
 import { AgentWalletManager } from './agent/wallet';
 
-// Suppress noisy ethers.js "@TODO Error" for filter-not-found RPC errors
-const originalStderr = process.stderr.write.bind(process.stderr);
-(process.stderr as any).write = (chunk: any, ...args: any[]) => {
-  const str = typeof chunk === 'string' ? chunk : chunk?.toString?.() ?? '';
-  if (str.includes('filter not found') || str.includes('@TODO Error: could not coalesce')) return true;
-  return (originalStderr as any)(chunk, ...args);
+// Suppress noisy ethers.js "@TODO Error" for filter-not-found RPC errors.
+// ethers uses console.log internally to print these errors, so we intercept
+// both console.log and the underlying stdout/stderr write streams.
+const _origConsoleLog = console.log;
+const _origConsoleError = console.error;
+const suppressFilter = (...args: unknown[]): boolean => {
+  const str = args.map(a => typeof a === 'string' ? a : (a as any)?.message ?? '').join(' ');
+  return str.includes('filter not found') || str.includes('could not coalesce');
 };
+console.log = (...args: unknown[]) => { if (!suppressFilter(...args)) _origConsoleLog(...args); };
+console.error = (...args: unknown[]) => { if (!suppressFilter(...args)) _origConsoleError(...args); };
+
+// Also intercept raw stream writes for ethers stack traces
+for (const stream of [process.stdout, process.stderr] as NodeJS.WriteStream[]) {
+  const original = stream.write.bind(stream);
+  (stream as any).write = (chunk: any, ...args: any[]) => {
+    const str = typeof chunk === 'string' ? chunk : chunk?.toString?.() ?? '';
+    if (str.includes('filter not found') || str.includes('@TODO Error') || str.includes('could not coalesce')) return true;
+    return (original as any)(chunk, ...args);
+  };
+}
 
 const app = express();
 

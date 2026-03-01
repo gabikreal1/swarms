@@ -182,6 +182,22 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
       );
       if (result.rows.length > 0) {
         const r = result.rows[0];
+        // Fetch bids for this job
+        const bidsResult = await pool.query(
+          `SELECT chain_id, bidder, price, delivery_time, reputation, metadata_uri, accepted, created_at
+           FROM bids WHERE job_id = $1 ORDER BY created_at`,
+          [r.id],
+        );
+        const bids = bidsResult.rows.map((b: Record<string, unknown>) => ({
+          id: b.chain_id ? Number(b.chain_id) : null,
+          bidder: b.bidder,
+          price: Number(b.price ?? 0),
+          deliveryTime: Number(b.delivery_time ?? 0),
+          reputation: Number(b.reputation ?? 0),
+          metadataUri: b.metadata_uri ?? '',
+          accepted: b.accepted ?? false,
+          createdAt: (b.created_at as Date)?.toISOString?.() ?? b.created_at,
+        }));
         res.json({
           data: {
             id: r.id,
@@ -196,6 +212,7 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
             status: r.status,
             createdAt: r.created_at?.toISOString?.() ?? r.created_at,
             bidCount: r.bid_count,
+            bids,
           },
         });
         return;
@@ -220,6 +237,22 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
     );
     if (dbResult.rows.length > 0) {
       const r = dbResult.rows[0];
+      // Fetch bids for this job
+      const bidsResult = await pool.query(
+        `SELECT chain_id, bidder, price, delivery_time, reputation, metadata_uri, accepted, created_at
+         FROM bids WHERE job_id = $1 ORDER BY created_at`,
+        [r.id],
+      );
+      const bids = bidsResult.rows.map((b: Record<string, unknown>) => ({
+        id: b.chain_id ? Number(b.chain_id) : null,
+        bidder: b.bidder,
+        price: Number(b.price ?? 0),
+        deliveryTime: Number(b.delivery_time ?? 0),
+        reputation: Number(b.reputation ?? 0),
+        metadataUri: b.metadata_uri ?? '',
+        accepted: b.accepted ?? false,
+        createdAt: (b.created_at as Date)?.toISOString?.() ?? b.created_at,
+      }));
       res.json({
         data: {
           id: r.id,
@@ -234,6 +267,7 @@ router.get('/jobs/:id', async (req: Request, res: Response) => {
           status: r.status,
           createdAt: r.created_at?.toISOString?.() ?? r.created_at,
           bidCount: r.bid_count,
+          bids,
         },
       });
       return;

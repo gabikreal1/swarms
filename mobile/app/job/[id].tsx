@@ -472,23 +472,25 @@ export default function JobDetailScreen() {
       )}
 
       {/* Delivery */}
-      {(jobStatus === 'delivered' || jobStatus === 'validating' || jobStatus === 'completed') && job.delivery && (
+      {(jobStatus === 'delivered' || jobStatus === 'validating' || jobStatus === 'completed') && (
         <Section header="Delivery">
           <SectionRow
             label="Status"
             value={jobStatus === 'completed' ? 'Approved' : 'Submitted'}
           />
-          <SectionRow
-            label="Proof Hash"
-            detail={job.delivery.proofHash?.slice(0, 20) + '...'}
-          />
-          {job.delivery.deliveredAt && (
+          {job.delivery?.proofHash && (
+            <SectionRow
+              label="Proof Hash"
+              detail={job.delivery.proofHash.slice(0, 20) + '...'}
+            />
+          )}
+          {job.delivery?.deliveredAt && (
             <SectionRow
               label="Delivered"
               value={new Date(job.delivery.deliveredAt).toLocaleDateString()}
             />
           )}
-          {(job.delivery.evidenceGatewayUrl || job.delivery.evidenceUri) && (
+          {(job.delivery?.evidenceGatewayUrl || job.delivery?.evidenceUri) && (
             <SectionRow
               label="View Evidence"
               accessory="disclosure"
@@ -496,15 +498,26 @@ export default function JobDetailScreen() {
                 const url = job.delivery.evidenceGatewayUrl || job.delivery.evidenceUri;
                 Linking.openURL(url);
               }}
-              isLast={!job.metadataGatewayUrl}
             />
           )}
-          {job.metadataGatewayUrl && (
+          {job.delivery?.txHash && (
             <SectionRow
-              label="View Job Metadata"
+              label="View Delivery Transaction"
               accessory="disclosure"
               onPress={() => {
-                Linking.openURL(job.metadataGatewayUrl);
+                Linking.openURL(`https://testnet.explorer.arc.network/tx/${job.delivery.txHash}`);
+              }}
+            />
+          )}
+          {(job.metadataGatewayUrl || job.metadataUri) && (
+            <SectionRow
+              label="View Job on IPFS"
+              accessory="disclosure"
+              onPress={() => {
+                const url = job.metadataGatewayUrl || (job.metadataUri?.startsWith('ipfs://')
+                  ? job.metadataUri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')
+                  : job.metadataUri);
+                if (url) Linking.openURL(url);
               }}
               isLast
             />
@@ -512,14 +525,17 @@ export default function JobDetailScreen() {
         </Section>
       )}
 
-      {/* Job Metadata link (when no delivery section) */}
-      {!(jobStatus === 'delivered' || jobStatus === 'validating' || jobStatus === 'completed') && job.metadataGatewayUrl && (
+      {/* IPFS links (when not in delivery states) */}
+      {!(jobStatus === 'delivered' || jobStatus === 'validating' || jobStatus === 'completed') && (job.metadataGatewayUrl || job.metadataUri) && (
         <Section header="IPFS Data">
           <SectionRow
-            label="View Job Metadata"
+            label="View Job on IPFS"
             accessory="disclosure"
             onPress={() => {
-              Linking.openURL(job.metadataGatewayUrl);
+              const url = job.metadataGatewayUrl || (job.metadataUri?.startsWith('ipfs://')
+                ? job.metadataUri.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/')
+                : job.metadataUri);
+              if (url) Linking.openURL(url);
             }}
             isLast
           />

@@ -628,6 +628,9 @@ export class FeedService {
     // Per-tag performance: count completed and total jobs per tag per agent
     let tagPerfMap: Map<string, { tag: string; jobs: number; successRate: number }[]> = new Map();
 
+    // Dynamic job stats from bids+jobs (more accurate than agents table which depends on ReputationUpdated event)
+    let dynamicStatsMap: Map<string, { completed: number; total: number }> = new Map();
+
     if (wallets.length > 0) {
       const perfSql = `
         SELECT
@@ -654,13 +657,36 @@ export class FeedService {
           successRate: total > 0 ? Math.round((completed / total) * 100) / 100 : 0,
         });
       }
+
+      // Aggregate job stats per agent (count distinct jobs, not per-tag)
+      const statsSql = `
+        SELECT
+          b.bidder AS wallet,
+          COUNT(DISTINCT j.id) AS total_jobs,
+          COUNT(DISTINCT j.id) FILTER (WHERE j.status = 'completed') AS completed_jobs
+        FROM bids b
+        JOIN jobs j ON j.id = b.job_id
+        WHERE b.bidder = ANY($1)
+          AND b.accepted = TRUE
+        GROUP BY b.bidder
+      `;
+      const statsRes = await pool.query(statsSql, [wallets]);
+      for (const row of statsRes.rows) {
+        dynamicStatsMap.set(row.wallet as string, {
+          completed: Number(row.completed_jobs),
+          total: Number(row.total_jobs),
+        });
+      }
     }
 
     const items: AgentDirectoryEntry[] = rows.map((r: Record<string, unknown>) => {
       const wallet = r.wallet as string;
-      const completed = Number(r.jobs_completed ?? 0);
-      const failed = Number(r.jobs_failed ?? 0);
-      const total = completed + failed;
+      // Use dynamic stats from bids/jobs, fallback to agents table
+      const dynamic = dynamicStatsMap.get(wallet);
+      const storedCompleted = Number(r.jobs_completed ?? 0);
+      const storedFailed = Number(r.jobs_failed ?? 0);
+      const completed = dynamic ? dynamic.completed : storedCompleted;
+      const total = dynamic ? dynamic.total : (storedCompleted + storedFailed);
       return {
         address: wallet,
         name: r.name as string,

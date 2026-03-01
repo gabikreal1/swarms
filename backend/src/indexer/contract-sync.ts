@@ -2,6 +2,7 @@ import { ethers, Contract, JsonRpcProvider } from 'ethers';
 import { log } from '../lib/logger';
 import { config } from '../config';
 import { insertJob, insertBid } from '../db/queries';
+import { pinata } from '../services/pinata';
 
 /**
  * Directly reads current contract state (not events) and upserts into the DB.
@@ -67,6 +68,8 @@ export async function syncContractState(): Promise<void> {
       let tags: string[] = [];
       let deadline = 0n;
       let status = 'open';
+      let budget: string | undefined;
+      let category: string | undefined;
 
       if (jobRegistryData) {
         const [jobData] = jobRegistryData;
@@ -77,6 +80,21 @@ export async function syncContractState(): Promise<void> {
         tags = Array.from(meta.tags);
         deadline = BigInt(meta.deadline);
         status = STATUS_MAP[Number(jobData.status)] || 'open';
+      }
+
+      // Extract budget and category from IPFS metadata (best-effort)
+      if (metadataURI) {
+        try {
+          const ipfsMeta = await pinata.fetchJSON(metadataURI);
+          if (ipfsMeta?.budget?.amount != null) {
+            budget = String(Math.round(ipfsMeta.budget.amount * 1e6));
+          }
+          if (ipfsMeta?.category) {
+            category = ipfsMeta.category;
+          }
+        } catch (err) {
+          log.indexer.debug(`IPFS metadata fetch for job ${jobId} skipped:`, (err as Error).message);
+        }
       }
 
       // OrderBook has poster + more accurate status
@@ -99,6 +117,8 @@ export async function syncContractState(): Promise<void> {
         metadataUri: metadataURI,
         tags,
         deadline,
+        budget,
+        category,
         blockNumber: BigInt(currentBlock),
         txHash: '0x' + '0'.repeat(64), // placeholder — we don't have the original tx
       });

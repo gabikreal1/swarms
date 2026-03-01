@@ -36,6 +36,7 @@ const configSchema = z.object({
   pinataJwt: z.string().optional(),
   pinataApiKey: z.string().optional(),
   pinataSecretKey: z.string().optional(),
+  pinataGatewayUrl: z.string().default('https://gateway.pinata.cloud'),
 
   // PostgreSQL
   databaseUrl: z.string().optional(),
@@ -70,6 +71,7 @@ export const config = configSchema.parse({
   pinataJwt: process.env.PINATA_JWT,
   pinataApiKey: process.env.PINATA_API_KEY,
   pinataSecretKey: process.env.PINATA_SECRET_KEY,
+  pinataGatewayUrl: process.env.PINATA_GATEWAY_URL,
   databaseUrl: process.env.DATABASE_URL,
   paymentReceiverAddress: process.env.PAYMENT_RECEIVER_ADDRESS?.trim(),
   usdcAddress: process.env.USDC_ADDRESS?.trim(),

@@ -10,6 +10,7 @@ import feedRouter from './api/feed';
 import streamRouter from './api/stream';
 import taxonomyRouter from './api/taxonomy';
 import chatRouter from './api/chat';
+import ipfsRouter from './api/ipfs';
 import authRouter from './api/auth';
 import { errorHandler } from './api/middleware';
 import { nanopaymentGate, PRICING } from './api/nanopayments';
@@ -129,6 +130,9 @@ app.use(jobRoutes);
 app.use('/v1/feed/jobs/recommended', premiumLimiter, nanopaymentGate(PRICING.premium));
 // Free: /v1/feed/jobs, /v1/feed/agents
 app.use('/v1/feed', freeLimiter, feedRouter);
+
+// ── IPFS routes (pin requires auth, fetch is free) ──────────────────
+app.use('/v1/ipfs', llmLimiter, ipfsRouter);
 
 // ── Auth routes ──────────────────────────────────────────────────────
 app.use('/v1/auth', authRouter);

@@ -3,6 +3,8 @@ import { createLLMProvider } from '../llm/factory';
 import { AgentWalletManager } from '../agent/wallet';
 import { LLMProvider } from '../llm/types';
 import { config } from '../config';
+import { log } from '../lib/logger';
+import { pinata } from '../services/pinata';
 
 const VALIDATION_ORACLE_ABI = [
   'function submitValidation(uint256 jobId, uint256 criteriaPassedBitmask, uint8 score, bytes32 reportHash)',
@@ -82,21 +84,21 @@ export class ValidatorAgent {
           return;
         }
 
-        console.log(
-          `[validator] Validation requested for job ${jobId}`,
+        log.validator.info(
+          `Validation requested for job ${jobId}`,
         );
         try {
           await this.validateJob(Number(jobId));
         } catch (error) {
-          console.error(
-            `[validator] Validation failed for job ${jobId}:`,
-            error,
+          log.validator.error(
+            `Validation failed for job ${jobId}:`,
+            (error as Error).message,
           );
         }
       },
     );
 
-    console.log('[validator] Listening for validation requests');
+    log.validator.info('Listening for validation requests');
   }
 
   async validateJob(jobId: number): Promise<ValidationReport> {
@@ -149,52 +151,69 @@ export class ValidatorAgent {
     const criteriaOnChain =
       await this.orderBookContract.jobCriteria(jobId);
     const criteriaCount = Number(criteriaOnChain.criteriaCount);
+    const onChainHash: string = criteriaOnChain.criteriaHash;
 
     if (criteriaCount === 0) {
       return [];
     }
 
-    // Fetch the job metadata to get criteria descriptions.
-    // The criteriaHash on-chain is a hash of the off-chain criteria document
-    // stored at the job's metadataURI. In production, we would:
-    // 1. Get the metadataURI from the JobRegistry
-    // 2. Fetch the metadata document from IPFS
-    // 3. Verify that keccak256(criteria) matches criteriaHash
-    // 4. Parse the criteria descriptions
-    //
-    // For now, generate placeholder criteria from the on-chain data.
+    // 1. Query DB for the job's metadata_uri (populated by contract-sync / indexer)
+    let metadataURI = '';
     try {
-      const [, bids] = await this.orderBookContract.getJob(jobId);
-      const acceptedBid = bids.find((b: any) => b.accepted);
-      const metadataURI = acceptedBid?.metadataURI || '';
+      const { getPool } = require('../db/pool');
+      const pool = getPool();
+      const { rows } = await pool.query(
+        'SELECT metadata_uri FROM jobs WHERE chain_id = $1',
+        [jobId],
+      );
+      metadataURI = rows[0]?.metadata_uri || '';
+    } catch (err) {
+      log.validator.warn(`DB lookup for job ${jobId} metadata_uri failed:`, (err as Error).message);
+    }
 
-      if (metadataURI) {
-        try {
-          const metadataContent =
-            await this.fetchFromURI(metadataURI);
-          if (
-            metadataContent?.successCriteria &&
-            Array.isArray(metadataContent.successCriteria)
-          ) {
-            return metadataContent.successCriteria.map(
-              (
-                c: { description: string },
-                i: number,
-              ) => ({
-                index: i,
+    // 2. Fetch metadata document from IPFS and extract criteria
+    if (metadataURI) {
+      try {
+        const metadataContent = await pinata.fetchJSON(metadataURI);
+        if (
+          metadataContent?.successCriteria &&
+          Array.isArray(metadataContent.successCriteria)
+        ) {
+          // 3. Verify criteria hash matches on-chain hash
+          const criteriaPayload = JSON.stringify(
+            metadataContent.successCriteria.map(
+              (c: { id: string; description: string; measurable: boolean }) => ({
+                id: c.id,
                 description: c.description,
+                measurable: c.measurable,
               }),
+            ),
+          );
+          const computedHash = ethers.keccak256(ethers.toUtf8Bytes(criteriaPayload));
+
+          if (computedHash !== onChainHash) {
+            log.validator.error(
+              `Criteria hash mismatch for job ${jobId}: on-chain=${onChainHash}, computed=${computedHash}`,
             );
+            // Continue with fetched criteria but log the discrepancy
+          } else {
+            log.validator.info(`Criteria hash verified for job ${jobId}`);
           }
-        } catch {
-          // Fall through to generated criteria
+
+          return metadataContent.successCriteria.map(
+            (c: { description: string }, i: number) => ({
+              index: i,
+              description: c.description,
+            }),
+          );
         }
+      } catch (err) {
+        log.validator.warn(`Failed to fetch metadata for job ${jobId}:`, (err as Error).message);
       }
-    } catch {
-      // Fall through to generated criteria
     }
 
     // Generate placeholder criteria when we cannot fetch the metadata
+    log.validator.warn(`Using placeholder criteria for job ${jobId} (no metadata available)`);
     const criteria: { index: number; description: string }[] = [];
     for (let i = 0; i < criteriaCount; i++) {
       criteria.push({
@@ -219,37 +238,15 @@ export class ValidatorAgent {
     }
 
     try {
-      const content = await this.fetchFromURI(evidenceURI);
+      const content = await pinata.fetchJSON(evidenceURI);
       return { evidenceURI, content };
     } catch (error) {
-      console.error(
-        `[validator] Failed to fetch evidence from ${evidenceURI}:`,
-        error,
+      log.validator.error(
+        `Failed to fetch evidence from ${evidenceURI}:`,
+        (error as Error).message,
       );
       return { evidenceURI, content: null };
     }
-  }
-
-  private async fetchFromURI(uri: string): Promise<any> {
-    // Support IPFS, HTTP(S), and data URIs
-    let url = uri;
-    if (uri.startsWith('ipfs://')) {
-      const cid = uri.slice('ipfs://'.length);
-      url = `https://gateway.pinata.cloud/ipfs/${cid}`;
-    }
-
-    if (url.startsWith('data:')) {
-      const commaIdx = url.indexOf(',');
-      if (commaIdx === -1) return null;
-      const data = url.slice(commaIdx + 1);
-      return JSON.parse(Buffer.from(data, 'base64').toString());
-    }
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response.json();
   }
 
   private async evaluateCriteria(
@@ -300,9 +297,9 @@ export class ValidatorAgent {
           evidenceFound: parsed.evidenceFound,
         });
       } catch (error) {
-        console.error(
-          `[validator] Failed to evaluate criterion ${criterion.index}:`,
-          error,
+        log.validator.error(
+          `Failed to evaluate criterion ${criterion.index}:`,
+          (error as Error).message,
         );
         evaluations.push({
           criterionIndex: criterion.index,
@@ -390,8 +387,8 @@ export class ValidatorAgent {
       reportHash,
     );
     await tx.wait();
-    console.log(
-      `[validator] Validation submitted for job ${jobId}: score=${clampedScore}`,
+    log.validator.info(
+      `Validation submitted for job ${jobId}: score=${clampedScore}`,
     );
   }
 }

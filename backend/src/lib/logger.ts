@@ -49,4 +49,5 @@ export const log = {
   feed: makeServiceLogger('feed'),
   auth: makeServiceLogger('auth'),
   stream: makeServiceLogger('stream'),
+  ipfs: makeServiceLogger('ipfs'),
 };

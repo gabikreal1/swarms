@@ -21,6 +21,8 @@ export interface InsertJobParams {
   metadataUri: string;
   tags: string[];
   deadline: bigint;
+  budget?: string;       // wei-scale string (e.g. "50000000" for 50 USDC)
+  category?: string;
   blockNumber: bigint;
   txHash: string;
 }
@@ -29,13 +31,15 @@ export async function insertJob(p: InsertJobParams): Promise<string> {
   if (p.chainId != null) {
     // Chain data: upsert on chain_id
     const res = await db().query(
-      `INSERT INTO jobs (chain_id, poster, description, metadata_uri, tags, deadline, status, block_number, tx_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, $8)
+      `INSERT INTO jobs (chain_id, poster, description, metadata_uri, tags, deadline, budget, category, status, block_number, tx_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open', $9, $10)
        ON CONFLICT (chain_id) WHERE chain_id IS NOT NULL DO UPDATE SET
          description = EXCLUDED.description,
          metadata_uri = EXCLUDED.metadata_uri,
          tags = EXCLUDED.tags,
          deadline = EXCLUDED.deadline,
+         budget = COALESCE(EXCLUDED.budget, jobs.budget),
+         category = COALESCE(EXCLUDED.category, jobs.category),
          updated_at = NOW()
        RETURNING id`,
       [
@@ -45,6 +49,8 @@ export async function insertJob(p: InsertJobParams): Promise<string> {
         p.metadataUri,
         p.tags,
         p.deadline.toString(),
+        p.budget ?? null,
+        p.category ?? null,
         p.blockNumber.toString(),
         p.txHash,
       ],

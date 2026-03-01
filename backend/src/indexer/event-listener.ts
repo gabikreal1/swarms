@@ -19,6 +19,7 @@ import {
   getBidUuidByChainId,
 } from "../db/queries";
 import { streamService, StreamEvent } from "../services/stream";
+import { pinata } from "../services/pinata";
 
 // ────────────────────────────────────────────────────────────
 // Minimal ABIs (event signatures only)
@@ -331,13 +332,35 @@ export class EventListener {
     try {
       const [jobData] = await this.jobRegistryReader.getJob(chainJobId);
       const meta = jobData.metadata;
+      const metadataURI: string = meta.metadataURI;
+
+      // Extract budget and category from IPFS metadata (best-effort)
+      let budget: string | undefined;
+      let category: string | undefined;
+      if (metadataURI) {
+        try {
+          const ipfsMeta = await pinata.fetchJSON(metadataURI);
+          if (ipfsMeta?.budget?.amount != null) {
+            // Store as wei-scale USDC (6 decimals)
+            budget = String(Math.round(ipfsMeta.budget.amount * 1e6));
+          }
+          if (ipfsMeta?.category) {
+            category = ipfsMeta.category;
+          }
+        } catch (err) {
+          log.indexer.debug(`IPFS metadata fetch for job ${chainJobId} skipped:`, (err as Error).message);
+        }
+      }
+
       await insertJob({
         chainId: chainJobId,
         poster,
         description: meta.description,
-        metadataUri: meta.metadataURI,
+        metadataUri: metadataURI,
         tags: Array.from(meta.tags),
         deadline: BigInt(meta.deadline),
+        budget,
+        category,
         blockNumber,
         txHash,
       });

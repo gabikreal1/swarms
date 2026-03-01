@@ -40,6 +40,7 @@ export interface JobFeedItem {
   status: string;
   createdAt: number;
   bids: JobBid[];
+  bidCount: number;
   hasDispute: boolean;
 }
 
@@ -116,8 +117,27 @@ export function fetchOverview() {
   return fetchApi<{ data: MarketOverview }>("/v1/stats/overview");
 }
 
-export function fetchJobs(filters: Record<string, string> = {}) {
-  return fetchApi<PaginatedResponse<JobFeedItem>>("/v1/feed/jobs", { limit: "20", ...filters });
+export async function fetchJobs(filters: Record<string, string> = {}) {
+  const res = await fetchApi<PaginatedResponse<Record<string, unknown>>>("/v1/feed/jobs", { limit: "20", ...filters });
+  // Normalize: API may return bids[] or just bidCount
+  const data = res.data.map((raw): JobFeedItem => {
+    const bids: JobBid[] = Array.isArray(raw.bids) ? raw.bids as JobBid[] : [];
+    const bidCount = typeof raw.bidCount === "number" ? raw.bidCount : bids.length;
+    return {
+      id: raw.id as number ?? raw.chainId as number ?? 0,
+      poster: (raw.poster as string) ?? "",
+      description: (raw.description as string) ?? "",
+      metadataURI: (raw.metadataURI ?? raw.metadataUri ?? "") as string,
+      tags: (raw.tags as string[]) ?? [],
+      deadline: (raw.deadline as number) ?? 0,
+      status: (raw.status as string) ?? "open",
+      createdAt: (raw.createdAt as number) ?? 0,
+      bids,
+      bidCount,
+      hasDispute: (raw.hasDispute as boolean) ?? false,
+    };
+  });
+  return { data, nextCursor: res.nextCursor, total: res.total };
 }
 
 export function fetchAgents(filters: Record<string, string> = {}) {

@@ -25,7 +25,7 @@ export default function AdminJobs() {
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedId, setExpandedId] = useState<number | string | null>(null);
 
   // Filters
   const [status, setStatus] = useState("");
@@ -153,7 +153,7 @@ export default function AdminJobs() {
                           </div>
                         </td>
                         <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
-                        <td className="px-4 py-3 text-center">{job.bids?.length ?? 0}</td>
+                        <td className="px-4 py-3 text-center">{job.bidCount ?? job.bids?.length ?? 0}</td>
                         <td className="px-4 py-3 text-xs text-muted">
                           <span className={isExpired ? "text-red-500" : ""}>
                             {deadlineDate.toLocaleDateString()}
@@ -188,9 +188,9 @@ export default function AdminJobs() {
                               </div>
                               {(job.bids?.length ?? 0) > 0 && (
                                 <div className="space-y-2">
-                                  <span className="text-xs font-medium text-muted uppercase">Bids ({job.bids!.length})</span>
+                                  <span className="text-xs font-medium text-muted uppercase">Bids ({job.bids.length})</span>
                                   <div className="space-y-2">
-                                    {job.bids!.map((bid) => (
+                                    {job.bids.map((bid) => (
                                       <div key={bid.id} className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 text-xs">
                                         <span className="font-mono text-accent">{formatAddress(bid.bidder)}</span>
                                         <span className="font-mono font-medium">{formatUSDC(parseFloat(bid.price))}</span>

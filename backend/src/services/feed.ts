@@ -4,6 +4,18 @@ import { getPool } from '../db/pool';
 // Types
 // ────────────────────────────────────────────────────────────
 
+export interface BidItem {
+  id: number;
+  jobId: number;
+  bidder: string;
+  price: string;
+  deliveryTime: number;
+  reputation: string;
+  metadataURI: string;
+  accepted: boolean;
+  createdAt: number;
+}
+
 export interface JobFeedItem {
   id: string;
   chainId: number | null;
@@ -17,6 +29,8 @@ export interface JobFeedItem {
   status: number;
   createdAt: string;
   bidCount: number;
+  bids: BidItem[];
+  hasDispute: boolean;
   marketContext: {
     budgetPercentile: number;
     competitionLevel: 'low' | 'medium' | 'high';
@@ -271,25 +285,73 @@ export class FeedService {
     const hasMore = rows.length > limit;
     if (hasMore) rows = rows.slice(0, limit);
 
+    // --- Fetch bids for all jobs in one query ---
+    const jobIds = rows.map((r: Record<string, unknown>) => r.id as string);
+    let bidsMap: Map<string, BidItem[]> = new Map();
+
+    if (jobIds.length > 0) {
+      const bidsSql = `
+        SELECT id, job_id, bidder, price, delivery_time, reputation, metadata_uri, accepted, created_at
+        FROM bids
+        WHERE job_id = ANY($1::uuid[])
+        ORDER BY created_at ASC
+      `;
+      const bidsResult = await pool.query(bidsSql, [jobIds]);
+      for (const b of bidsResult.rows) {
+        const jobId = b.job_id as string;
+        if (!bidsMap.has(jobId)) bidsMap.set(jobId, []);
+        bidsMap.get(jobId)!.push({
+          id: Number(b.id),
+          jobId: Number(b.job_id),
+          bidder: b.bidder as string,
+          price: b.price?.toString() ?? '0',
+          deliveryTime: Number(b.delivery_time ?? 0),
+          reputation: b.reputation?.toString() ?? '0',
+          metadataURI: (b.metadata_uri as string) ?? '',
+          accepted: b.accepted as boolean,
+          createdAt: Math.floor(new Date(b.created_at).getTime() / 1000),
+        });
+      }
+    }
+
+    // --- Check disputes ---
+    let disputeJobIds: Set<string> = new Set();
+    if (jobIds.length > 0) {
+      const disputeSql = `
+        SELECT DISTINCT job_id FROM disputes
+        WHERE job_id = ANY($1::uuid[]) AND status NOT IN ('none', 'dismissed')
+      `;
+      const disputeResult = await pool.query(disputeSql, [jobIds]);
+      for (const d of disputeResult.rows) {
+        disputeJobIds.add(d.job_id as string);
+      }
+    }
+
     const items: JobFeedItem[] = rows.map(
-      (r: Record<string, unknown>) => ({
-        id: r.id as string,
-        chainId: r.chain_id ? Number(r.chain_id) : null,
-        poster: r.poster as string,
-        description: r.description as string,
-        metadataUri: r.metadata_uri as string,
-        tags: (r.tags as string[]) ?? [],
-        category: (r.category as string) ?? '',
-        deadline: Number(r.deadline ?? 0),
-        budget: Number(r.budget ?? 0) / 1e6,
-        status: r.status as unknown as number,
-        createdAt: (r.created_at as Date).toISOString(),
-        bidCount: r.bid_count as number,
-        marketContext: {
-          budgetPercentile: Math.round(Number(r.budget_percentile ?? 0) * 100),
-          competitionLevel: competitionLevel(r.bid_count as number),
-        },
-      }),
+      (r: Record<string, unknown>) => {
+        const id = r.id as string;
+        const bids = bidsMap.get(id) ?? [];
+        return {
+          id,
+          chainId: r.chain_id ? Number(r.chain_id) : null,
+          poster: r.poster as string,
+          description: r.description as string,
+          metadataUri: r.metadata_uri as string,
+          tags: (r.tags as string[]) ?? [],
+          category: (r.category as string) ?? '',
+          deadline: Number(r.deadline ?? 0),
+          budget: Number(r.budget ?? 0) / 1e6,
+          status: r.status as unknown as number,
+          createdAt: (r.created_at as Date).toISOString(),
+          bidCount: bids.length,
+          bids,
+          hasDispute: disputeJobIds.has(id),
+          marketContext: {
+            budgetPercentile: Math.round(Number(r.budget_percentile ?? 0) * 100),
+            competitionLevel: competitionLevel(bids.length),
+          },
+        };
+      },
     );
 
     const nextCursor =
@@ -471,6 +533,8 @@ export class FeedService {
           status: r.status as unknown as number,
           createdAt: (r.created_at as Date).toISOString(),
           bidCount,
+          bids: [],
+          hasDispute: false,
           marketContext: {
             budgetPercentile: Math.round(Number(r.budget_percentile ?? 0) * 100),
             competitionLevel: competitionLevel(bidCount),

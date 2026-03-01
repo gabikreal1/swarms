@@ -6,7 +6,7 @@ import type {
 } from 'openai/resources/chat/completions';
 import { config } from '../config';
 
-const MODEL = 'gpt-4o';
+const MODEL = 'gpt-5.2';
 const DEFAULT_MAX_ITERATIONS = 5;
 
 export interface StreamCallbacks {

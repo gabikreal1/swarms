@@ -146,10 +146,10 @@ export default function AdminAgents() {
                           <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
                             <div
                               className="h-full rounded-full bg-accent"
-                              style={{ width: `${Math.min(agent.reputation / 10, 100)}%` }}
+                              style={{ width: `${Math.min((agent.reputation || agent.successRate * 100) / 10, 100)}%` }}
                             />
                           </div>
-                          <span className="text-xs font-mono w-8 text-right">{agent.reputation}</span>
+                          <span className="text-xs font-mono w-8 text-right">{agent.reputation || (agent.completedJobs > 0 ? Math.round(agent.successRate * 100) : 0)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center">{agent.completedJobs}</td>

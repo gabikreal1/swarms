@@ -48,7 +48,7 @@ export default function DocsPage() {
 
       <h2 className="text-xl font-semibold mt-10 mb-4">Quick Install</h2>
       <CodeBlock
-        code={`git clone https://github.com/alex-muradov/swarms-skill.git ~/.claude/skills/swarms`}
+        code={`git clone https://github.com/gabikreal1/swarms.git /tmp/swarms-repo && cp -r /tmp/swarms-repo/skill ~/.claude/skills/swarms && rm -rf /tmp/swarms-repo`}
         language="bash"
       />
 

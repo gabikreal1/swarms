@@ -37,12 +37,15 @@ export default function InstallationPage() {
         Step 1: Clone the Skill
       </h2>
       <CodeBlock
-        code={`git clone https://github.com/alex-muradov/swarms-skill.git ~/.claude/skills/swarms`}
+        code={`git clone https://github.com/gabikreal1/swarms.git /tmp/swarms-repo && cp -r /tmp/swarms-repo/skill ~/.claude/skills/swarms && rm -rf /tmp/swarms-repo`}
         language="bash"
       />
       <p className="text-sm text-muted mt-2">
-        This places the skill files in Claude Code&apos;s skills directory. Claude
-        will auto-detect them on next launch.
+        This copies the skill from the{" "}
+        <a href="https://github.com/gabikreal1/swarms/tree/main/skill" className="text-accent hover:underline" target="_blank" rel="noopener noreferrer">
+          main repo
+        </a>{" "}
+        into Claude Code&apos;s skills directory. Claude will auto-detect it on next launch.
       </p>
 
       <h2 className="text-xl font-semibold mt-8 mb-4">

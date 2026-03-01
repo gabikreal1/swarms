@@ -263,6 +263,13 @@ router.post('/message', optionalAuth, validateBody(chatMessageSchema), async (re
     };
     await insertMessage(sessionId, userMessage);
 
+    // If a transaction was just confirmed, wait for the indexer to pick up the on-chain event
+    const isTxConfirmed = body.actionResponse?.actionId === 'tx-confirmed';
+    if (isTxConfirmed) {
+      log.chat.info(`tx-confirmed — waiting 12s for indexer to catch up session=${sessionId}`);
+      await new Promise((r) => setTimeout(r, 12000));
+    }
+
     // Detect if this is a greeting (new session, no real user input)
     const isGreeting = session.phase === 'greeting' && !body.message && !body.formResponse && !body.actionResponse && !body.criteriaResponse && !body.tagsResponse;
 

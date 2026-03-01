@@ -318,6 +318,135 @@ export class EventListener {
     }
   }
 
+  // ── Self-healing helpers ─────────────────────────────────
+  //
+  // When a dependent event (BidPlaced, DeliverySubmitted, etc.) fires but
+  // its parent job/bid isn't in the DB, these helpers read directly from
+  // the chain and insert the missing record instead of silently dropping
+  // the event.  This covers:
+  //   1. handleJobPosted threw (even the fallback) → cursor advanced past it
+  //   2. Job was seeded via API without chain_id
+  //   3. Indexer restarted with a stale last_block
+  //   4. Any other race or transient failure
+
+  private async ensureJobInDb(chainJobId: bigint): Promise<string | null> {
+    // Fast path: job already exists
+    const existing = await getJobUuidByChainId(chainJobId);
+    if (existing) return existing;
+
+    log.indexer.warn(`ensureJobInDb: chain_id ${chainJobId} missing, reading from chain…`);
+
+    try {
+      let poster = "";
+      let description = "";
+      let metadataURI = "";
+      let tags: string[] = [];
+      let deadline = 0n;
+      let budget: string | undefined;
+      let category: string | undefined;
+
+      // Try JobRegistry for full metadata
+      try {
+        const [jobData] = await this.jobRegistryReader.getJob(chainJobId);
+        const meta = jobData.metadata;
+        poster = meta.poster;
+        description = meta.description;
+        metadataURI = meta.metadataURI;
+        tags = Array.from(meta.tags);
+        deadline = BigInt(meta.deadline);
+      } catch {
+        // JobRegistry unavailable — fall through to OrderBook
+      }
+
+      // OrderBook has poster (more reliable) and status
+      try {
+        const [obJob] = await this.orderBookReader.getJob(chainJobId);
+        if (!poster || poster === ethers.ZeroAddress) poster = obJob.poster;
+      } catch {
+        // OrderBook also failed — if we still have no poster, give up
+      }
+
+      if (!poster || poster === ethers.ZeroAddress) {
+        log.indexer.error(`ensureJobInDb: no poster found on-chain for job ${chainJobId}`);
+        return null;
+      }
+
+      // IPFS metadata (best-effort)
+      if (metadataURI) {
+        try {
+          const ipfsMeta = await pinata.fetchJSON(metadataURI);
+          if (ipfsMeta?.budget?.amount != null) {
+            budget = String(Math.round(ipfsMeta.budget.amount * 1e6));
+          }
+          if (ipfsMeta?.category) category = ipfsMeta.category;
+        } catch {
+          // Non-critical
+        }
+      }
+
+      const currentBlock = await this.provider.getBlockNumber();
+      const jobUuid = await insertJob({
+        chainId: chainJobId,
+        poster,
+        description,
+        metadataUri: metadataURI,
+        tags,
+        deadline,
+        budget,
+        category,
+        blockNumber: BigInt(currentBlock),
+        txHash: "0x" + "0".repeat(64),
+      });
+
+      log.indexer.info(`ensureJobInDb: self-healed job chain_id ${chainJobId} → ${jobUuid}`);
+      return jobUuid;
+    } catch (err) {
+      log.indexer.error(`ensureJobInDb: failed for chain_id ${chainJobId}:`, (err as Error).message);
+      return null;
+    }
+  }
+
+  private async ensureBidInDb(
+    chainBidId: bigint,
+    chainJobId: bigint,
+  ): Promise<string | null> {
+    const existing = await getBidUuidByChainId(chainBidId);
+    if (existing) return existing;
+
+    const jobUuid = await this.ensureJobInDb(chainJobId);
+    if (!jobUuid) return null;
+
+    log.indexer.warn(`ensureBidInDb: chain_id ${chainBidId} missing, reading from chain…`);
+
+    try {
+      const [, bids] = await this.orderBookReader.getJob(chainJobId);
+      const bidData = bids.find((b: { id: bigint }) => b.id === chainBidId);
+      if (!bidData) {
+        log.indexer.error(`ensureBidInDb: bid ${chainBidId} not found on-chain for job ${chainJobId}`);
+        return null;
+      }
+
+      const currentBlock = await this.provider.getBlockNumber();
+      const bidUuid = await insertBid({
+        chainId: chainBidId,
+        jobId: jobUuid,
+        bidder: bidData.bidder,
+        price: BigInt(bidData.price),
+        deliveryTime: BigInt(bidData.deliveryTime),
+        reputation: BigInt(bidData.reputation),
+        metadataUri: bidData.metadataURI || "",
+        blockNumber: BigInt(currentBlock),
+        txHash: "0x" + "0".repeat(64),
+      });
+
+      log.indexer.info(`ensureBidInDb: self-healed bid chain_id ${chainBidId} → ${bidUuid}`);
+      return bidUuid;
+    } catch (err) {
+      log.indexer.error(`ensureBidInDb: failed for chain_id ${chainBidId}:`, (err as Error).message);
+      return null;
+    }
+  }
+
   // ── OrderBook handlers ────────────────────────────────────
 
   private async handleJobPosted(
@@ -389,14 +518,14 @@ export class EventListener {
     const bidder = args[2] as string;
     const price = args[3] as bigint;
 
-    // Resolve job UUID from chain_id
-    const jobUuid = await getJobUuidByChainId(chainJobId);
+    // Resolve job UUID — self-heal from chain if missing
+    const jobUuid = await this.ensureJobInDb(chainJobId);
     if (!jobUuid) {
-      log.indexer.error(` BidPlaced: no job found for chain_id ${chainJobId}`);
+      log.indexer.error(`BidPlaced: could not resolve job for chain_id ${chainJobId} (even after self-heal)`);
       return;
     }
 
-    // Read full bid data from OrderBook
+    // Read full bid data from OrderBook (best-effort enrichment)
     try {
       const [, bids] = await this.orderBookReader.getJob(chainJobId);
       const bidData = bids.find((b: { id: bigint }) => b.id === chainBidId);
@@ -452,10 +581,11 @@ export class EventListener {
     const chainBidId = args[1] as bigint;
     const proofHash = args[2] as string;
 
-    const jobUuid = await getJobUuidByChainId(chainJobId);
-    const bidUuid = await getBidUuidByChainId(chainBidId);
+    // Self-heal: ensure both job and bid exist in DB
+    const jobUuid = await this.ensureJobInDb(chainJobId);
+    const bidUuid = await this.ensureBidInDb(chainBidId, chainJobId);
     if (!jobUuid || !bidUuid) {
-      log.indexer.error(` DeliverySubmitted: missing UUID for job=${chainJobId} bid=${chainBidId}`);
+      log.indexer.error(`DeliverySubmitted: could not resolve job=${chainJobId} bid=${chainBidId} (even after self-heal)`);
       return;
     }
 
@@ -482,9 +612,9 @@ export class EventListener {
     const initiator = args[2] as string;
     const reason = args[3] as string;
 
-    const jobUuid = await getJobUuidByChainId(chainJobId);
+    const jobUuid = await this.ensureJobInDb(chainJobId);
     if (!jobUuid) {
-      log.indexer.error(` DisputeRaised: no job found for chain_id ${chainJobId}`);
+      log.indexer.error(`DisputeRaised: could not resolve job for chain_id ${chainJobId} (even after self-heal)`);
       return;
     }
 
@@ -575,9 +705,9 @@ export class EventListener {
     const agent = args[2] as string;
     const amount = args[3] as bigint;
 
-    const jobUuid = await getJobUuidByChainId(chainJobId);
+    const jobUuid = await this.ensureJobInDb(chainJobId);
     if (!jobUuid) {
-      log.indexer.error(` EscrowCreated: no job found for chain_id ${chainJobId}`);
+      log.indexer.error(`EscrowCreated: could not resolve job for chain_id ${chainJobId} (even after self-heal)`);
       return;
     }
 

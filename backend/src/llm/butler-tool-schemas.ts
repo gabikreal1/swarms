@@ -126,7 +126,7 @@ export const BUTLER_TOOL_SCHEMAS: ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'get_my_jobs',
-      description: 'Query the current user\'s jobs, optionally filtered by status.',
+      description: 'Query the current user\'s jobs, optionally filtered by status. Returns only the most recent job by default; pass limit to get more.',
       parameters: {
         type: 'object',
         properties: {
@@ -134,6 +134,10 @@ export const BUTLER_TOOL_SCHEMAS: ChatCompletionTool[] = [
             type: 'string',
             description: 'Filter by job status.',
             enum: ['open', 'in_progress', 'delivered', 'completed', 'disputed'],
+          },
+          limit: {
+            type: 'number',
+            description: 'Max number of jobs to return. Defaults to 1 (latest job only). Use higher values when the user asks for "all my jobs".',
           },
         },
         required: [],

@@ -5,6 +5,7 @@ import { getPool } from '../db/pool';
 import { ethers } from 'ethers';
 import { config } from '../config';
 import { log } from '../lib/logger';
+import { pinata } from './pinata';
 
 const finalizePipeline = new FinalizePipeline();
 
@@ -230,22 +231,21 @@ export async function executeButlerTool(
     case 'get_my_jobs': {
       const wallet = args.wallet as string;
       const status = args.status as string | undefined;
+      const limit = (args.limit as number) || 1; // default: last job only
       const pool = getPool();
-
-      // Debug: log total jobs and distinct posters so we can diagnose wallet mismatches
-      const totalRes = await pool.query(`SELECT count(*) as total FROM jobs`);
-      const postersRes = await pool.query(`SELECT DISTINCT LOWER(poster) as poster FROM jobs LIMIT 10`);
-      log.tool.info(`get_my_jobs: querying wallet=${wallet} total_jobs=${totalRes.rows[0].total} known_posters=[${postersRes.rows.map((r: any) => r.poster).join(', ')}]`);
 
       let query = `SELECT j.id, j.chain_id, j.description, j.status, j.budget, j.category, j.tags, j.deadline, j.created_at, COUNT(b.id)::int as bid_count FROM jobs j LEFT JOIN bids b ON b.job_id = j.id WHERE LOWER(j.poster) = LOWER($1)`;
       const params: unknown[] = [wallet];
+      let paramIdx = 2;
       if (status) {
-        query += ` AND j.status = $2`;
+        query += ` AND j.status = $${paramIdx}`;
         params.push(status);
+        paramIdx++;
       }
-      query += ` GROUP BY j.id ORDER BY j.created_at DESC LIMIT 20`;
+      query += ` GROUP BY j.id ORDER BY j.created_at DESC LIMIT $${paramIdx}`;
+      params.push(limit);
       const { rows } = await pool.query(query, params);
-      log.tool.info(`get_my_jobs: found ${rows.length} jobs for wallet=${wallet}`);
+      log.tool.info(`get_my_jobs: found ${rows.length} jobs for wallet=${wallet} (limit=${limit})`);
       return { jobs: rows };
     }
 
@@ -256,7 +256,23 @@ export async function executeButlerTool(
         `SELECT b.id, b.chain_id, b.bidder, b.price, b.delivery_time, b.reputation, b.accepted, b.metadata_uri, a.name as agent_name FROM bids b LEFT JOIN agents a ON LOWER(a.wallet) = LOWER(b.bidder) WHERE b.job_id = $1 ORDER BY b.price ASC`,
         [jobId],
       );
-      return { jobId, bids: rows };
+
+      // Fetch IPFS proposal content for each bid (best-effort)
+      const enrichedBids = await Promise.all(
+        rows.map(async (bid: any) => {
+          if (bid.metadata_uri) {
+            try {
+              const proposal = await pinata.fetchJSON(bid.metadata_uri);
+              return { ...bid, proposal };
+            } catch (err) {
+              log.tool.debug(`bid ${bid.id} IPFS fetch failed:`, (err as Error).message);
+            }
+          }
+          return bid;
+        }),
+      );
+
+      return { jobId, bids: enrichedBids };
     }
 
     case 'accept_bid': {
@@ -292,11 +308,41 @@ export async function executeButlerTool(
       const jobId = args.jobId as string;
       const pool = getPool();
       const { rows } = await pool.query(
-        `SELECT j.id, j.status, j.description, d.proof_hash, d.created_at as delivered_at FROM jobs j LEFT JOIN deliveries d ON d.job_id = j.id WHERE j.id = $1`,
+        `SELECT j.id, j.chain_id, j.status, j.description, j.metadata_uri as job_metadata_uri, d.proof_hash, d.created_at as delivered_at FROM jobs j LEFT JOIN deliveries d ON d.job_id = j.id WHERE j.id = $1`,
         [jobId],
       );
       if (rows.length === 0) return { error: 'Job not found' };
-      return rows[0];
+
+      const job = rows[0];
+
+      // If delivered, try to fetch on-chain evidence URI via criteriaDeliveries
+      if (job.chain_id && config.orderBookAddress && (job.status === 'delivered' || job.status === 'completed')) {
+        try {
+          const CRITERIA_DELIVERY_ABI = [
+            'function criteriaDeliveries(uint256) view returns (bytes32 evidenceMerkleRoot, bytes32 overallProofHash, string evidenceURI, uint256 deliveredAt)',
+          ];
+          const network = new ethers.Network('arc-testnet', config.chainId);
+          const provider = new ethers.JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
+          const contract = new ethers.Contract(config.orderBookAddress!, CRITERIA_DELIVERY_ABI, provider);
+          const delivery = await contract.criteriaDeliveries(job.chain_id);
+          const evidenceURI: string = delivery.evidenceURI;
+
+          if (evidenceURI) {
+            try {
+              const evidence = await pinata.fetchJSON(evidenceURI);
+              job.evidenceURI = evidenceURI;
+              job.evidence = evidence;
+            } catch (err) {
+              log.tool.debug(`delivery evidence IPFS fetch failed:`, (err as Error).message);
+              job.evidenceURI = evidenceURI;
+            }
+          }
+        } catch (err) {
+          log.tool.debug(`criteriaDeliveries read failed:`, (err as Error).message);
+        }
+      }
+
+      return job;
     }
 
     case 'approve_delivery': {

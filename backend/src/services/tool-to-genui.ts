@@ -238,24 +238,56 @@ function buildBidsBlocks(result: Record<string, unknown>): GenUIBlock[] {
     }];
   }
 
-  const rows = bids.map((b) => ({
-    agent: String(b.agent_name || b.bidder || '-'),
-    price: b.price != null ? `${Number(b.price) / 1e6} USDC` : '-',
-    reputation: String(b.reputation ?? '-'),
-  }));
+  // Build a card per bid with proposal details (if fetched from IPFS)
+  for (const b of bids) {
+    const agentName = String(b.agent_name || b.bidder || '-');
+    const price = b.price != null ? `${Number(b.price) / 1e6} USDC` : '-';
+    const proposal = b.proposal as Record<string, unknown> | undefined;
 
-  const table: TableBlock = {
-    id: blockId('table'),
-    type: 'table',
-    columns: [
-      { key: 'agent', label: 'Agent', align: 'left', flex: 2 },
-      { key: 'price', label: 'Price', align: 'right', flex: 1 },
-      { key: 'reputation', label: 'Rep', align: 'center', flex: 1 },
-    ],
-    rows,
-    sortable: true,
-  };
-  blocks.push(table);
+    let proposalSummary = '';
+    if (proposal) {
+      // Extract meaningful fields from the IPFS proposal document
+      const parts: string[] = [];
+      if (proposal.approach) parts.push(`**Approach:** ${proposal.approach}`);
+      if (proposal.description) parts.push(`**Description:** ${proposal.description}`);
+      if (proposal.timeline) parts.push(`**Timeline:** ${proposal.timeline}`);
+      if (proposal.deliverables) {
+        const dels = Array.isArray(proposal.deliverables)
+          ? proposal.deliverables.join(', ')
+          : String(proposal.deliverables);
+        parts.push(`**Deliverables:** ${dels}`);
+      }
+      // Fallback: show raw JSON summary if no known fields
+      if (parts.length === 0) {
+        proposalSummary = JSON.stringify(proposal).slice(0, 500);
+      } else {
+        proposalSummary = parts.join('\n');
+      }
+    }
+
+    const rows = [
+      { field: 'Agent', value: agentName },
+      { field: 'Price', value: price },
+      { field: 'Reputation', value: String(b.reputation ?? '-') },
+      { field: 'Delivery Time', value: b.delivery_time ? `${Number(b.delivery_time)}s` : '-' },
+    ];
+
+    if (proposalSummary) {
+      rows.push({ field: 'Proposal', value: proposalSummary });
+    }
+
+    const table: TableBlock = {
+      id: blockId('table'),
+      type: 'table',
+      columns: [
+        { key: 'field', label: 'Field', align: 'left', flex: 1 },
+        { key: 'value', label: 'Value', align: 'left', flex: 3 },
+      ],
+      rows,
+      sortable: false,
+    };
+    blocks.push(table);
+  }
 
   // Action buttons to accept each bid
   const actions = bids.map((b) => ({
@@ -311,11 +343,15 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
   const blocks: GenUIBlock[] = [];
   const status = String(result.status || '-');
 
-  const rows = [
+  const rows: Record<string, string>[] = [
     { field: 'Status', value: status },
     { field: 'Proof Hash', value: String(result.proof_hash || '-') },
     { field: 'Delivered At', value: String(result.delivered_at || '-') },
   ];
+
+  if (result.evidenceURI) {
+    rows.push({ field: 'Evidence URI', value: String(result.evidenceURI) });
+  }
 
   const table: TableBlock = {
     id: blockId('table'),
@@ -328,6 +364,43 @@ function buildDeliveryStatusBlocks(result: Record<string, unknown>): GenUIBlock[
     sortable: false,
   };
   blocks.push(table);
+
+  // Show delivery evidence content if fetched from IPFS
+  const evidence = result.evidence as Record<string, unknown> | undefined;
+  if (evidence) {
+    let evidenceText = '';
+    const manifest = evidence.manifest as Record<string, unknown> | undefined;
+    const evidenceItems = evidence.evidence as Record<string, unknown>[] | undefined;
+
+    if (manifest) {
+      const parts: string[] = [];
+      if (manifest.description) parts.push(`**Job:** ${manifest.description}`);
+      if (manifest.completedAt) parts.push(`**Completed:** ${manifest.completedAt}`);
+      const results = manifest.results as Record<string, unknown> | undefined;
+      if (results) {
+        for (const [step, val] of Object.entries(results)) {
+          const summary = typeof val === 'string' ? val.slice(0, 300) : JSON.stringify(val).slice(0, 300);
+          parts.push(`**${step}:** ${summary}`);
+        }
+      }
+      evidenceText += parts.join('\n');
+    }
+
+    if (evidenceItems && evidenceItems.length > 0) {
+      const criteriaLines = evidenceItems.map((item) =>
+        `- **Criterion ${item.criterionIndex}** (${item.description}): ${String(item.evidence).slice(0, 200)}`,
+      );
+      evidenceText += (evidenceText ? '\n\n' : '') + '**Validation Evidence:**\n' + criteriaLines.join('\n');
+    }
+
+    if (evidenceText) {
+      blocks.push({
+        id: blockId('text'),
+        type: 'text',
+        content: evidenceText,
+      } as GenUIBlock);
+    }
+  }
 
   // Add action buttons based on status
   if (status === 'delivered') {

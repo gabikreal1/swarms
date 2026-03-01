@@ -15,6 +15,7 @@ import { useTheme } from '../../src/theme/useTheme';
 import { USE_MOCKS } from '../../src/config/mock';
 import { useButlerChat, PHASE_LABELS, Message } from '../../src/hooks/useButlerChat';
 import BlockRenderer from '../../src/components/genui/BlockRenderer';
+import AnimatedBlock from '../../src/components/genui/AnimatedBlock';
 
 export default function ButlerTab() {
   const { colors, typography } = useTheme();
@@ -36,6 +37,7 @@ export default function ButlerTab() {
     handleFormSubmit,
     handleCriteriaChange,
     handleTagsChange,
+    streamingBlockIds,
   } = useButlerChat('new');
 
   const renderMessage = (item: Message) => {
@@ -83,17 +85,24 @@ export default function ButlerTab() {
             { backgroundColor: colors.secondarySystemBackground },
           ]}
         >
-          {item.blocks!.map((block) => (
-            <View key={block.id} style={styles.blockWrapper}>
+          {item.blocks!.map((block) => {
+            const isText = block.type === 'text';
+            const blockContent = (
               <BlockRenderer
                 block={block}
+                isStreaming={isText ? streamingBlockIds.has(block.id) : undefined}
                 onAction={handleActionWithContext}
                 onFormSubmit={handleFormSubmit}
                 onCriteriaChange={handleCriteriaChange}
                 onTagsChange={handleTagsChange}
               />
-            </View>
-          ))}
+            );
+            return (
+              <View key={block.id} style={styles.blockWrapper}>
+                {isText ? blockContent : <AnimatedBlock>{blockContent}</AnimatedBlock>}
+              </View>
+            );
+          })}
           <Text
             style={[
               typography.caption2,

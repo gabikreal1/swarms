@@ -50,6 +50,9 @@ export function useButlerChat(chatId: string | null) {
   const initialFetchDone = useRef(false);
   const MAX_RETRIES = 5;
 
+  const pendingBlocksRef = useRef<any[]>([]);
+  const isTextStreamingRef = useRef(false);
+
   const criteriaRef = useRef<{
     selectedIds: string[];
     customCriteria?: string[];
@@ -62,6 +65,32 @@ export function useButlerChat(chatId: string | null) {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 100);
   }, []);
+
+  const addBlockToLastMessage = useCallback((block: GenUIBlock) => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'butler') {
+        return [
+          ...prev.slice(0, -1),
+          { ...last, blocks: [...(last.blocks || []), block] },
+        ];
+      }
+      return prev;
+    });
+  }, []);
+
+  const flushPendingBlocks = useCallback(() => {
+    const pending = [...pendingBlocksRef.current];
+    pendingBlocksRef.current = [];
+    if (pending.length === 0) return;
+
+    pending.forEach((block, i) => {
+      setTimeout(() => {
+        addBlockToLastMessage(block);
+        scrollToEnd();
+      }, (i + 1) * 150); // 150ms stagger, first block at 150ms after text completes
+    });
+  }, [addBlockToLastMessage, scrollToEnd]);
 
   // Initialize wallet
   const tryInitWallet = useCallback(async () => {
@@ -159,6 +188,7 @@ export function useButlerChat(chatId: string | null) {
             case 'block_start':
               setAgentTyping(true);
               if (data.blockType === 'text') {
+                isTextStreamingRef.current = true;
                 setStreamingBlockIds(prev => new Set(prev).add(data.blockId));
                 setMessages(prev => {
                   const last = prev[prev.length - 1];
@@ -209,14 +239,19 @@ export function useButlerChat(chatId: string | null) {
               break;
 
             case 'block_complete': {
-              setStreamingBlockIds(prev => {
-                const next = new Set(prev);
-                next.delete(data.blockId);
-                return next;
-              });
+              const isTextBlock = data.block?.type === 'text';
+
+              if (isTextBlock) {
+                isTextStreamingRef.current = false;
+                setStreamingBlockIds(prev => {
+                  const next = new Set(prev);
+                  next.delete(data.blockId);
+                  return next;
+                });
+              }
+
               // Skip empty text blocks — they cause blank space
-              if (data.block?.type === 'text' && !data.block?.content?.trim()) {
-                // Remove the placeholder we added in block_start
+              if (isTextBlock && !data.block?.content?.trim()) {
                 setMessages((prev) => {
                   const last = prev[prev.length - 1];
                   if (last && last.role === 'butler' && last.blocks) {
@@ -230,6 +265,21 @@ export function useButlerChat(chatId: string | null) {
                 });
                 break;
               }
+
+              // Non-text blocks: queue them while text is streaming
+              if (!isTextBlock) {
+                if (isTextStreamingRef.current) {
+                  // Text is still streaming — queue this block
+                  pendingBlocksRef.current.push(data.block);
+                } else {
+                  // Text is done — add immediately (will animate on mount)
+                  addBlockToLastMessage(data.block);
+                  scrollToEnd();
+                }
+                break;
+              }
+
+              // Text block_complete: update the text block content
               setMessages((prev) => {
                 const last = prev[prev.length - 1];
                 if (last && last.role === 'butler') {
@@ -249,16 +299,7 @@ export function useButlerChat(chatId: string | null) {
                     { ...last, blocks: updatedBlocks },
                   ];
                 }
-                return [
-                  ...prev,
-                  {
-                    id: data.blockId,
-                    role: 'butler' as const,
-                    text: '',
-                    timestamp: Date.now(),
-                    blocks: [data.block],
-                  },
-                ];
+                return prev;
               });
               scrollToEnd();
               break;
@@ -270,6 +311,8 @@ export function useButlerChat(chatId: string | null) {
 
             case 'done':
               setAgentTyping(false);
+              // Flush pending blocks with staggered animation
+              flushPendingBlocks();
               break;
 
             case 'error':

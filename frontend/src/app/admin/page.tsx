@@ -121,10 +121,10 @@ export default function AdminOverview() {
             />
             <KpiCard
               label="Total Volume"
-              value={formatUSDC(overview.totalVolume)}
+              value={formatUSDC(overview.totalVolume / 1e6)}
               icon={DollarSign}
               trend={volumeTrend}
-              subtitle={pc ? `${formatUSDC(pc.volumeThisWeek)} this week` : undefined}
+              subtitle={pc ? `${formatUSDC(pc.volumeThisWeek / 1e6)} this week` : undefined}
             />
             <KpiCard
               label="Active Agents"

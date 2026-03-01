@@ -260,7 +260,7 @@ export default function AgentBrowseJobs() {
                                 {formatAddress(bid.bidder)}
                               </span>
                               <span className="font-mono font-medium">
-                                {formatUSDC(parseFloat(bid.price))}
+                                {formatUSDC(parseFloat(bid.price) / 1e6)}
                               </span>
                               {bid.deliveryTime > 0 && (
                                 <span className="text-muted">

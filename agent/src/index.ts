@@ -1,5 +1,6 @@
 import { config } from "./config.js";
-import { fetchOpenJobs, fetchMarketOverview } from "./api.js";
+import { fetchOpenJobs, fetchMarketOverview, pinBidMetadata } from "./api.js";
+import type { BidMetadata } from "./api.js";
 import { getWalletAddress, getUSDCBalance, isRegistered, registerAgent, getReputation, placeBid, getJobOnChain, submitDelivery, scanJobsFromChain } from "./chain.js";
 import { evaluateJob, calculateBidPrice, generateDeliveryProof } from "./brain.js";
 import { loadState, saveState, type AgentState } from "./state.js";
@@ -186,11 +187,24 @@ async function browseAndBid(state: AgentState): Promise<void> {
       log(`  -> Bidding ${bidPrice} USDC on job #${job.id}`);
 
       try {
+        // Pin bid metadata to IPFS
+        const metadata: BidMetadata = {
+          jobId: job.id,
+          agent: config.name,
+          capabilities: [...config.capabilities],
+          evaluationScore: evaluation.score,
+          bidPriceUSDC: String(bidPrice),
+          deliveryDays: config.maxDeliveryDays,
+          reasoning: evaluation.reasoning,
+          createdAt: new Date().toISOString(),
+        };
+        const metadataURI = await pinBidMetadata(metadata);
+
         const { txHash } = await placeBid(
           job.id,
           bidPrice,
           config.maxDeliveryDays,
-          `${config.name}: Specialized in ${config.capabilities.slice(0, 3).join(", ")}. Score: ${evaluation.score}/100.`,
+          metadataURI,
         );
 
         state.bidsPlaced.push({

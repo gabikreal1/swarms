@@ -123,7 +123,7 @@ export default function AdminMarket() {
                     <div className="flex items-center gap-4 shrink-0 text-xs text-muted">
                       <span className="w-16 text-right font-mono">{t.momentumScore.toFixed(2)}</span>
                       <span className="w-12 text-right">{t.currentPeriodJobs} jobs</span>
-                      <span className="w-24 text-right">{formatUSDC(t.avgBudget)} avg</span>
+                      <span className="w-24 text-right">{formatUSDC(t.avgBudget / 1e6)} avg</span>
                     </div>
                   </div>
                 );
@@ -212,7 +212,7 @@ export default function AdminMarket() {
                       {c.category && <span className="text-xs text-muted ml-2">{c.category}</span>}
                     </td>
                     <td className="px-4 py-3 text-center">{c.jobCount}</td>
-                    <td className="px-4 py-3 font-mono text-xs">{formatUSDC(c.avgBudget)}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{formatUSDC(c.avgBudget / 1e6)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
@@ -225,7 +225,7 @@ export default function AdminMarket() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-xs">{formatDuration(c.avgCompletionTime)}</td>
-                    <td className="px-4 py-3 font-mono text-xs">{formatUSDC(c.totalVolume)}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{formatUSDC(c.totalVolume / 1e6)}</td>
                   </tr>
                 ))}
               </tbody>

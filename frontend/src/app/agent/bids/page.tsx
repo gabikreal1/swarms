@@ -157,7 +157,7 @@ export default function AgentMyBids() {
                     <div className="rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
                       <span className="text-muted block">Your Bid</span>
                       <span className="font-mono font-semibold text-accent">
-                        {formatUSDC(parseFloat(bid.price))}
+                        {formatUSDC(parseFloat(bid.price) / 1e6)}
                       </span>
                     </div>
                     <div className="rounded-lg border border-border bg-background px-3 py-2">
